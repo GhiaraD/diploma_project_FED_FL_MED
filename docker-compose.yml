@@ -1,0 +1,142 @@
+version: "3.9"
+
+services:
+  # ===== Central FL =====
+  central:
+    build: ./services/central
+    environment:
+      CENTRAL_STORAGE: /storage
+      PORT: 8080
+    volumes:
+      - ./storage/central:/storage
+    ports:
+      - "8080:8080"
+
+  # ===== Node 1 =====
+  node1-api:
+    build: ./services/node/api
+    environment:
+      NODE_ID: node1
+      STORAGE_ROOT: /storage
+      CENTRAL_URL: http://central:8080
+      REDIS_URL: redis://node1-redis:6379/0
+    volumes:
+      - ./storage/node1:/storage
+    ports:
+      - "8001:8000"
+    depends_on:
+      - central
+      - node1-redis
+
+  node1-worker:
+    build: ./services/node/worker
+    environment:
+      NODE_ID: node1
+      STORAGE_ROOT: /storage
+      CENTRAL_URL: http://central:8080
+      REDIS_URL: redis://node1-redis:6379/0
+    volumes:
+      - ./storage/node1:/storage
+    depends_on:
+      - node1-redis
+      - node1-api
+
+  node1-redis:
+    image: redis:7
+    ports:
+      - "63791:6379"
+
+  node1-ui:
+    build: ./services/node/ui
+    environment:
+      NEXT_PUBLIC_API_BASE: http://localhost:8001
+    ports:
+      - "3001:3000"
+    depends_on:
+      - node1-api
+
+  # ===== Node 2 =====
+  node2-api:
+    build: ./services/node/api
+    environment:
+      NODE_ID: node2
+      STORAGE_ROOT: /storage
+      CENTRAL_URL: http://central:8080
+      REDIS_URL: redis://node2-redis:6379/0
+    volumes:
+      - ./storage/node2:/storage
+    ports:
+      - "8002:8000"
+    depends_on:
+      - central
+      - node2-redis
+
+  node2-worker:
+    build: ./services/node/worker
+    environment:
+      NODE_ID: node2
+      STORAGE_ROOT: /storage
+      CENTRAL_URL: http://central:8080
+      REDIS_URL: redis://node2-redis:6379/0
+    volumes:
+      - ./storage/node2:/storage
+    depends_on:
+      - node2-redis
+      - node2-api
+
+  node2-redis:
+    image: redis:7
+    ports:
+      - "63792:6379"
+
+  node2-ui:
+    build: ./services/node/ui
+    environment:
+      NEXT_PUBLIC_API_BASE: http://localhost:8002
+    ports:
+      - "3002:3000"
+    depends_on:
+      - node2-api
+
+  # ===== Node 3 =====
+  node3-api:
+    build: ./services/node/api
+    environment:
+      NODE_ID: node3
+      STORAGE_ROOT: /storage
+      CENTRAL_URL: http://central:8080
+      REDIS_URL: redis://node3-redis:6379/0
+    volumes:
+      - ./storage/node3:/storage
+    ports:
+      - "8003:8000"
+    depends_on:
+      - central
+      - node3-redis
+
+  node3-worker:
+    build: ./services/node/worker
+    environment:
+      NODE_ID: node3
+      STORAGE_ROOT: /storage
+      CENTRAL_URL: http://central:8080
+      REDIS_URL: redis://node3-redis:6379/0
+    volumes:
+      - ./storage/node3:/storage
+    depends_on:
+      - node3-redis
+      - node3-api
+
+  node3-redis:
+    image: redis:7
+    ports:
+      - "63793:6379"
+
+  node3-ui:
+    build: ./services/node/ui
+    environment:
+      NEXT_PUBLIC_API_BASE: http://localhost:8003
+    ports:
+      - "3003:3000"
+    depends_on:
+      - node3-api

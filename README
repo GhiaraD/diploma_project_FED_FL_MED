@@ -1,0 +1,17 @@
+# Fed-Med-FL
+
+Proiect dizertatie cu Federated Learning:
+- 3 noduri (spitale) + 1 nod central
+
+## Structura
+- services/central: orchestrator + aggregator + registry global
+- services/node/api: gateway local (FastAPI)
+- services/node/worker: job runner (Celery)
+- services/node/ui: Node Portal (Next.js)
+- shared/python/node_core: cod comun (ML/FL utils)
+
+## Quick start
+1) Pornire servicii:
+   make up
+2) Oprire:
+   make down
