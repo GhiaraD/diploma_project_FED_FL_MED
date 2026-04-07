@@ -15,3 +15,7 @@ Proiect dizertatie cu Federated Learning:
    make up
 2) Oprire:
    make down
+
+Central: http://localhost:8080/health
+Node1 API: http://localhost:8001/api/health
+Node1 UI: http://localhost:3001
