@@ -142,9 +142,13 @@ class FederatedClient:
                 print(f"[{self.node_id}] Warning: {key} not in global model")
                 delta[key] = local_state[key]
         
-        # Calculate delta statistics
+        # Calculate delta statistics (only for float tensors)
         total_params = sum(d.numel() for d in delta.values())
-        delta_norm = sum(torch.norm(d).item() ** 2 for d in delta.values()) ** 0.5
+        delta_norm = sum(
+            torch.norm(d.float()).item() ** 2 
+            for d in delta.values() 
+            if d.dtype in [torch.float32, torch.float64, torch.float16]
+        ) ** 0.5
         
         print(f"[{self.node_id}] ✓ Delta computed: {total_params:,} params, norm={delta_norm:.4f}")
         

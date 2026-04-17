@@ -196,11 +196,15 @@ class FedAvgAggregator:
             issues.append(f"Insufficient updates: {len(updates)} < {self.min_nodes}")
             return False, issues
         
-        # Check for outliers based on delta norms
+        # Check for outliers based on delta norms (only float tensors)
         delta_norms = []
         for update in updates:
             delta = update['delta']
-            norm = sum(torch.norm(d).item() ** 2 for d in delta.values()) ** 0.5
+            norm = sum(
+                torch.norm(d.float()).item() ** 2 
+                for d in delta.values() 
+                if d.dtype in [torch.float32, torch.float64, torch.float16]
+            ) ** 0.5
             delta_norms.append(norm)
         
         # Z-score outlier detection
@@ -276,8 +280,12 @@ class FedAvgAggregator:
                 if key in delta:
                     aggregated_delta[key] += weight * delta[key]
         
-        # Calculate aggregation statistics
-        agg_norm = sum(torch.norm(d).item() ** 2 for d in aggregated_delta.values()) ** 0.5
+        # Calculate aggregation statistics (only float tensors)
+        agg_norm = sum(
+            torch.norm(d.float()).item() ** 2 
+            for d in aggregated_delta.values() 
+            if d.dtype in [torch.float32, torch.float64, torch.float16]
+        ) ** 0.5
         
         print(f"[Central] ✓ Aggregation complete")
         print(f"[Central]   - Total samples: {total_samples}")
@@ -379,7 +387,12 @@ class FedAvgAggregator:
         # Weighted average of metrics
         for metric_name in ['accuracy', 'f1', 'auc', 'precision', 'recall']:
             values = [u['metrics'].get(metric_name, 0) for u in updates]
-            weights = [u['n_samples'] / total_samples for u in updates]
+            
+            # If total_samples is 0, use equal weights (simple average)
+            if total_samples > 0:
+                weights = [u['n_samples'] / total_samples for u in updates]
+            else:
+                weights = [1.0 / len(updates) for _ in updates]
             
             if any(v > 0 for v in values):
                 aggregated_metrics[metric_name] = sum(v * w for v, w in zip(values, weights))

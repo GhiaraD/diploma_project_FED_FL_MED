@@ -1,16 +1,28 @@
-.PHONY: up down logs build restart status test-api test-central clean help
+.PHONY: up down logs build restart status test-api test-central clean help up-gpu down-gpu
 
-# Start all services
+# Start all services (CPU mode)
 up:
 	docker compose up -d
+
+# Start all services with GPU support
+up-gpu:
+	docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
 
 # Start all services with build
 up-build:
 	docker compose up -d --build
 
+# Start all services with GPU and build
+up-gpu-build:
+	docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+
 # Stop all services
 down:
 	docker compose down
+
+# Stop all services (GPU mode)
+down-gpu:
+	docker compose -f docker-compose.yml -f docker-compose.gpu.yml down
 
 # Stop and remove volumes
 down-clean:
@@ -36,6 +48,10 @@ logs-node3:
 # Build all services
 build:
 	docker compose build
+
+# Build all services for GPU
+build-gpu:
+	docker compose -f docker-compose.yml -f docker-compose.gpu.yml build
 
 # Build specific services
 build-central:
@@ -113,10 +129,19 @@ help:
 	@echo "Fed-Med-FL - Makefile Commands"
 	@echo ""
 	@echo "Starting Services:"
-	@echo "  make up              - Start all services"
-	@echo "  make up-build        - Start all services with build"
+	@echo "  make up              - Start all services (CPU mode)"
+	@echo "  make up-gpu          - Start all services (GPU mode)"
+	@echo "  make up-build        - Start all services with build (CPU)"
+	@echo "  make up-gpu-build    - Start all services with build (GPU)"
 	@echo "  make down            - Stop all services"
 	@echo "  make down-clean      - Stop and remove volumes"
+	@echo ""
+	@echo "GPU Support:"
+	@echo "  make up-gpu          - Start with GPU acceleration"
+	@echo "  make build-gpu       - Build images for GPU"
+	@echo "  make down-gpu        - Stop GPU services"
+	@echo "  ./start_with_gpu.sh  - Auto-detect and start with GPU (Linux/WSL)"
+	@echo "  start_with_gpu.bat   - Auto-detect and start with GPU (Windows)"
 	@echo ""
 	@echo "Logs:"
 	@echo "  make logs            - View all logs"

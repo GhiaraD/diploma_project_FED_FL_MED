@@ -103,11 +103,11 @@ def train_local_model_task(
         val_size = len(train_dataset) - train_size
         train_dataset, val_dataset = random_split(train_dataset, [train_size, val_size])
         
-        # Create data loaders
+        # Create data loaders (num_workers=0 for Celery compatibility)
         train_loader, val_loader = create_dataloaders(
             train_dataset, val_dataset,
             batch_size=batch_size,
-            num_workers=2
+            num_workers=0
         )
         
         # Initialize model
@@ -376,7 +376,7 @@ def federated_training_task(
         train_loader, val_loader = create_dataloaders(
             train_dataset, val_dataset,
             batch_size=batch_size,
-            num_workers=2
+            num_workers=0  # Must be 0 for Celery workers
         )
         
         # Step 3: Initialize model with global weights
@@ -407,6 +407,7 @@ def federated_training_task(
         print(f"[{settings.NODE_ID}] Step 5: Computing delta...")
         global_model = get_model(model_name, num_classes=2, pretrained=False)
         global_model.load_state_dict(global_state)
+        global_model = global_model.to(settings.DEVICE)  # Move to same device as trained model
         
         delta = client.compute_delta(model, global_model)
         

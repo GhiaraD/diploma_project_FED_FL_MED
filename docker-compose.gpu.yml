@@ -1,0 +1,74 @@
+# Docker Compose Override for GPU Support
+# Usage: docker compose -f docker-compose.yml -f docker-compose.gpu.yml up
+
+version: '3.8'
+
+services:
+  # Node 1 - GPU enabled
+  node1-api:
+    environment:
+      - DEVICE=cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  node1-worker:
+    environment:
+      - DEVICE=cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # Node 2 - GPU enabled
+  node2-api:
+    environment:
+      - DEVICE=cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  node2-worker:
+    environment:
+      - DEVICE=cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # Node 3 - GPU enabled
+  node3-api:
+    environment:
+      - DEVICE=cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  node3-worker:
+    environment:
+      - DEVICE=cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

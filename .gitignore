@@ -23,6 +23,7 @@ dist/
 
 # Local storage / artifacts (NU se comit)
 storage/
+fl_datasets/
 **/storage/
 artifacts/
 *.pt

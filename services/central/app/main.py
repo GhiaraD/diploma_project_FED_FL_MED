@@ -91,7 +91,7 @@ class UpdateSubmitRequest(BaseModel):
     round_id: str
     base_model_hash: str
     n_samples: int
-    metrics: Dict[str, float]
+    metrics: Dict[str, Any]  # Changed from Dict[str, float] to accept all metric types
     delta: str  # Base64 encoded delta state dict
     delta_hash: str
 
