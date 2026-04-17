@@ -1,5 +1,32 @@
 FROM python:3.11-slim
+
 WORKDIR /app
-RUN pip install --no-cache-dir celery redis
-COPY app /app/app
-CMD ["python", "-m", "app.run_worker"]
+
+# Install system dependencies for OpenCV and PyTorch
+RUN apt-get update && apt-get install -y \
+    libgl1 \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy shared library first
+COPY shared/python/node_core /app/shared/python/node_core
+
+# Install shared library
+RUN pip install --no-cache-dir -e /app/shared/python/node_core
+
+# Install worker dependencies
+RUN pip install --no-cache-dir \
+    celery==5.3.4 \
+    redis==5.0.1 \
+    sqlalchemy==2.0.23
+
+# Copy worker and API code (worker needs API for tasks)
+COPY services/node/worker/app /app/worker
+COPY services/node/api/app /app/api
+
+# Set Python path
+ENV PYTHONPATH=/app:/app/shared/python/node_core
+
+WORKDIR /app/worker
+
+CMD ["celery", "-A", "run_worker:celery_app", "worker", "--loglevel=INFO"]

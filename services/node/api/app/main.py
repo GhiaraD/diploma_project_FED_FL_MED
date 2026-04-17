@@ -1,26 +1,540 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, BackgroundTasks
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session
+from typing import List, Optional
+from datetime import datetime
 import os
+import uuid
+import shutil
 
-app = FastAPI(title="Node API", version="0.1.0")
+from .config import settings
+from .database import get_db, Model, Job, Dataset, InferenceResult
+from .schemas import (
+    ModelInfo, ModelPromoteRequest, ModelListResponse,
+    JobInfo, JobCreateResponse,
+    TrainRequest, InferRequest, InferResponse,
+    FederatedJoinRequest, FederatedStatusResponse,
+    DatasetInfo, DatasetUploadResponse,
+    HealthResponse, NodeStatusResponse
+)
 
-@app.get("/api/health")
-def health():
-    return {"ok": True, "node_id": os.getenv("NODE_ID", "unknown")}
+app = FastAPI(
+    title=f"Node API - {settings.NODE_ID}",
+    version="0.1.0",
+    description="Hospital Node API for Federated Learning Medical Imaging"
+)
 
-@app.get("/api/node/status")
-def node_status():
+# CORS middleware - Allow requests from UI
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3001",
+        "http://localhost:3002",
+        "http://localhost:3003",
+        "http://localhost:3000",  # Dev mode
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ============================================================================
+# Health & Status Endpoints
+# ============================================================================
+
+@app.get("/api/health", response_model=HealthResponse)
+def health_check():
+    """Health check endpoint."""
     return {
-        "node_id": os.getenv("NODE_ID", "unknown"),
-        "storage_root": os.getenv("STORAGE_ROOT", "/storage"),
-        "central_url": os.getenv("CENTRAL_URL", ""),
+        "ok": True,
+        "node_id": settings.NODE_ID,
+        "timestamp": datetime.utcnow().isoformat()
     }
 
-@app.post("/api/infer")
-def infer():
-    # placeholder: va porni job in worker
-    return {"job_id": "infer-placeholder"}
 
-@app.post("/api/train")
-def train():
-    # placeholder: va porni job in worker
-    return {"job_id": "train-placeholder"}
+@app.get("/api/node/status", response_model=NodeStatusResponse)
+def node_status(db: Session = Depends(get_db)):
+    """Get node status and statistics."""
+    # Count models by type
+    models_count = {
+        "candidate": db.query(Model).filter(Model.type == "candidate").count(),
+        "deployed": db.query(Model).filter(Model.type == "deployed").count(),
+        "archived": db.query(Model).filter(Model.type == "archived").count()
+    }
+    
+    # Count jobs by status
+    jobs_count = {
+        "pending": db.query(Job).filter(Job.status == "pending").count(),
+        "running": db.query(Job).filter(Job.status == "running").count(),
+        "completed": db.query(Job).filter(Job.status == "completed").count(),
+        "failed": db.query(Job).filter(Job.status == "failed").count()
+    }
+    
+    # Count datasets
+    datasets_count = db.query(Dataset).count()
+    
+    return {
+        "node_id": settings.NODE_ID,
+        "storage_root": settings.STORAGE_ROOT,
+        "central_url": settings.CENTRAL_URL,
+        "device": settings.DEVICE,
+        "models": models_count,
+        "jobs": jobs_count,
+        "datasets": datasets_count
+    }
+
+
+# ============================================================================
+# Dataset Management Endpoints
+# ============================================================================
+
+@app.post("/api/data/upload", response_model=DatasetUploadResponse)
+async def upload_dataset(
+    file: UploadFile = File(...),
+    split: str = "train",
+    db: Session = Depends(get_db)
+):
+    """
+    Upload dataset (ZIP file with NORMAL/PNEUMONIA folders).
+    
+    Expected structure:
+        dataset.zip
+        ├── NORMAL/
+        │   ├── image1.jpg
+        │   └── ...
+        └── PNEUMONIA/
+            ├── image1.jpg
+            └── ...
+    """
+    # Generate dataset ID
+    dataset_id = f"dataset_{split}_{uuid.uuid4().hex[:8]}"
+    dataset_path = os.path.join(settings.DATASETS_DIR, dataset_id)
+    
+    # Save uploaded file
+    zip_path = f"{dataset_path}.zip"
+    os.makedirs(os.path.dirname(zip_path), exist_ok=True)
+    
+    with open(zip_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    
+    # Extract ZIP
+    import zipfile
+    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        zip_ref.extractall(dataset_path)
+    
+    # Remove ZIP file
+    os.remove(zip_path)
+    
+    # Count samples
+    normal_path = os.path.join(dataset_path, "NORMAL")
+    pneumonia_path = os.path.join(dataset_path, "PNEUMONIA")
+    
+    num_normal = len(os.listdir(normal_path)) if os.path.exists(normal_path) else 0
+    num_pneumonia = len(os.listdir(pneumonia_path)) if os.path.exists(pneumonia_path) else 0
+    num_samples = num_normal + num_pneumonia
+    
+    # Save to database
+    dataset = Dataset(
+        dataset_id=dataset_id,
+        name=file.filename,
+        path=dataset_path,
+        split=split,
+        num_samples=num_samples,
+        num_normal=num_normal,
+        num_pneumonia=num_pneumonia
+    )
+    db.add(dataset)
+    db.commit()
+    db.refresh(dataset)
+    
+    return {
+        "dataset_id": dataset_id,
+        "path": dataset_path,
+        "num_samples": num_samples,
+        "num_normal": num_normal,
+        "num_pneumonia": num_pneumonia
+    }
+
+
+@app.get("/api/data/list", response_model=List[DatasetInfo])
+def list_datasets(db: Session = Depends(get_db)):
+    """List all datasets."""
+    datasets = db.query(Dataset).all()
+    return [
+        {
+            "dataset_id": d.dataset_id,
+            "name": d.name,
+            "split": d.split,
+            "num_samples": d.num_samples,
+            "num_normal": d.num_normal,
+            "num_pneumonia": d.num_pneumonia,
+            "created_at": d.created_at.isoformat()
+        }
+        for d in datasets
+    ]
+
+
+# ============================================================================
+# Model Registry Endpoints
+# ============================================================================
+
+@app.get("/api/models/registry", response_model=ModelListResponse)
+def list_models(
+    type: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """List models in registry."""
+    query = db.query(Model)
+    
+    if type:
+        query = query.filter(Model.type == type)
+    
+    models = query.order_by(Model.created_at.desc()).all()
+    
+    return {
+        "models": [
+            {
+                "model_id": m.model_id,
+                "model_name": m.model_name,
+                "version": m.version,
+                "type": m.type,
+                "round_id": m.round_id,
+                "metrics": m.metrics,
+                "created_at": m.created_at.isoformat()
+            }
+            for m in models
+        ]
+    }
+
+
+@app.post("/api/models/promote")
+def promote_model(
+    request: ModelPromoteRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Promote candidate model to deployed.
+    
+    - Archives current deployed model
+    - Promotes candidate to deployed
+    """
+    # Get candidate model
+    candidate = db.query(Model).filter(
+        Model.model_id == request.model_id,
+        Model.type == "candidate"
+    ).first()
+    
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate model not found")
+    
+    # Archive current deployed model
+    current_deployed = db.query(Model).filter(
+        Model.type == "deployed",
+        Model.model_name == candidate.model_name
+    ).first()
+    
+    if current_deployed:
+        current_deployed.type = "archived"
+        current_deployed.archived_at = datetime.utcnow()
+        
+        # Move file to archived directory
+        old_path = current_deployed.file_path
+        new_path = old_path.replace("/candidate/", "/archived/")
+        if os.path.exists(old_path):
+            os.makedirs(os.path.dirname(new_path), exist_ok=True)
+            shutil.move(old_path, new_path)
+            current_deployed.file_path = new_path
+    
+    # Promote candidate
+    candidate.type = "deployed"
+    candidate.promoted_at = datetime.utcnow()
+    
+    # Move file to deployed directory
+    old_path = candidate.file_path
+    new_path = old_path.replace("/candidate/", "/deployed/")
+    if os.path.exists(old_path):
+        os.makedirs(os.path.dirname(new_path), exist_ok=True)
+        shutil.move(old_path, new_path)
+        candidate.file_path = new_path
+    
+    db.commit()
+    
+    return {
+        "status": "success",
+        "model_id": candidate.model_id,
+        "message": f"Model {candidate.model_id} promoted to deployed"
+    }
+
+
+@app.get("/api/models/{model_id}")
+def get_model_info(model_id: str, db: Session = Depends(get_db)):
+    """Get model information."""
+    model = db.query(Model).filter(Model.model_id == model_id).first()
+    
+    if not model:
+        raise HTTPException(status_code=404, detail="Model not found")
+    
+    return {
+        "model_id": model.model_id,
+        "model_name": model.model_name,
+        "version": model.version,
+        "type": model.type,
+        "round_id": model.round_id,
+        "base_model_hash": model.base_model_hash,
+        "file_path": model.file_path,
+        "metrics": model.metrics,
+        "created_at": model.created_at.isoformat()
+    }
+
+
+# ============================================================================
+# Training Endpoints
+# ============================================================================
+
+@app.post("/api/train/local", response_model=JobCreateResponse)
+async def start_local_training(
+    request: TrainRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """
+    Start local training job.
+    
+    Creates a Celery task for training.
+    """
+    from .tasks import train_local_model_task
+    
+    # Create job record
+    job_id = f"train_{uuid.uuid4().hex[:8]}"
+    
+    job = Job(
+        job_id=job_id,
+        job_type="train",
+        status="pending",
+        params=request.dict()
+    )
+    db.add(job)
+    db.commit()
+    
+    # Start Celery task
+    task = train_local_model_task.delay(
+        job_id=job_id,
+        dataset_id=request.dataset_id,
+        model_name=request.model_name,
+        num_epochs=request.num_epochs,
+        batch_size=request.batch_size,
+        learning_rate=request.learning_rate
+    )
+    
+    return {
+        "job_id": job_id,
+        "task_id": task.id,
+        "status": "pending"
+    }
+
+
+@app.get("/api/train/status/{job_id}")
+def get_training_status(job_id: str, db: Session = Depends(get_db)):
+    """Get training job status."""
+    job = db.query(Job).filter(Job.job_id == job_id).first()
+    
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    return {
+        "job_id": job.job_id,
+        "status": job.status,
+        "params": job.params,
+        "result": job.result,
+        "error": job.error,
+        "created_at": job.created_at.isoformat(),
+        "completed_at": job.completed_at.isoformat() if job.completed_at else None
+    }
+
+
+# ============================================================================
+# Inference Endpoints
+# ============================================================================
+
+@app.post("/api/infer", response_model=InferResponse)
+async def run_inference(
+    request: InferRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """
+    Run inference on images.
+    
+    Creates a Celery task for inference.
+    """
+    from .tasks import run_inference_task
+    
+    # Create job record
+    job_id = f"infer_{uuid.uuid4().hex[:8]}"
+    
+    job = Job(
+        job_id=job_id,
+        job_type="infer",
+        status="pending",
+        params=request.dict()
+    )
+    db.add(job)
+    db.commit()
+    
+    # Start Celery task
+    task = run_inference_task.delay(
+        job_id=job_id,
+        image_paths=request.image_paths,
+        model_id=request.model_id,
+        generate_gradcam=request.generate_gradcam
+    )
+    
+    return {
+        "job_id": job_id,
+        "task_id": task.id,
+        "status": "pending"
+    }
+
+
+@app.get("/api/infer/results/{job_id}")
+def get_inference_results(job_id: str, db: Session = Depends(get_db)):
+    """Get inference results."""
+    job = db.query(Job).filter(Job.job_id == job_id).first()
+    
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    # Get inference results
+    results = db.query(InferenceResult).filter(
+        InferenceResult.job_id == job_id
+    ).all()
+    
+    return {
+        "job_id": job_id,
+        "status": job.status,
+        "results": [
+            {
+                "result_id": r.result_id,
+                "image_path": r.image_path,
+                "predicted_class": r.predicted_class,
+                "confidence": r.confidence,
+                "probabilities": r.probabilities,
+                "gradcam_path": r.gradcam_path
+            }
+            for r in results
+        ]
+    }
+
+
+# ============================================================================
+# Federated Learning Endpoints
+# ============================================================================
+
+@app.post("/api/federated/join/{round_id}")
+async def join_federated_round(
+    round_id: str,
+    request: FederatedJoinRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Join a federated learning round.
+    
+    Registers node participation with central server.
+    """
+    from node_core import FederatedClient
+    
+    client = FederatedClient(
+        node_id=settings.NODE_ID,
+        central_url=settings.CENTRAL_URL,
+        storage_path=settings.STORAGE_ROOT
+    )
+    
+    try:
+        result = client.join_round(round_id)
+        return {
+            "status": "success",
+            "round_id": round_id,
+            "node_id": settings.NODE_ID,
+            "message": f"Joined round {round_id}"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/federated/train/{round_id}", response_model=JobCreateResponse)
+async def start_federated_training(
+    round_id: str,
+    dataset_id: str,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """
+    Start federated training for a round.
+    
+    Creates a Celery task for FL training.
+    """
+    from .tasks import federated_training_task
+    
+    # Create job record
+    job_id = f"fl_train_{round_id}_{uuid.uuid4().hex[:8]}"
+    
+    job = Job(
+        job_id=job_id,
+        job_type="federated_train",
+        status="pending",
+        params={"round_id": round_id, "dataset_id": dataset_id}
+    )
+    db.add(job)
+    db.commit()
+    
+    # Start Celery task
+    task = federated_training_task.delay(
+        job_id=job_id,
+        round_id=round_id,
+        dataset_id=dataset_id
+    )
+    
+    return {
+        "job_id": job_id,
+        "task_id": task.id,
+        "status": "pending"
+    }
+
+
+@app.get("/api/federated/status/{round_id}", response_model=FederatedStatusResponse)
+def get_federated_status(round_id: str, db: Session = Depends(get_db)):
+    """Get federated learning status for a round."""
+    from node_core import FederatedClient
+    
+    client = FederatedClient(
+        node_id=settings.NODE_ID,
+        central_url=settings.CENTRAL_URL,
+        storage_path=settings.STORAGE_ROOT
+    )
+    
+    try:
+        status = client.get_round_status(round_id)
+        
+        # Get local job status
+        job = db.query(Job).filter(
+            Job.job_type == "federated_train",
+            Job.params["round_id"].astext == round_id
+        ).order_by(Job.created_at.desc()).first()
+        
+        local_status = job.status if job else "not_started"
+        
+        return {
+            "round_id": round_id,
+            "node_id": settings.NODE_ID,
+            "local_status": local_status,
+            "central_status": status
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host=settings.API_HOST, port=settings.API_PORT)

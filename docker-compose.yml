@@ -3,7 +3,9 @@ version: "3.9"
 services:
   # ===== Central FL =====
   central:
-    build: ./services/central
+    build:
+      context: .
+      dockerfile: ./services/central/Dockerfile
     environment:
       CENTRAL_STORAGE: /storage
       PORT: 8080
@@ -14,7 +16,9 @@ services:
 
   # ===== Node 1 =====
   node1-api:
-    build: ./services/node/api
+    build:
+      context: .
+      dockerfile: ./services/node/api/Dockerfile
     environment:
       NODE_ID: node1
       STORAGE_ROOT: /storage
@@ -29,7 +33,9 @@ services:
       - node1-redis
 
   node1-worker:
-    build: ./services/node/worker
+    build:
+      context: .
+      dockerfile: ./services/node/worker/Dockerfile
     environment:
       NODE_ID: node1
       STORAGE_ROOT: /storage
@@ -47,7 +53,9 @@ services:
       - "63791:6379"
 
   node1-ui:
-    build: ./services/node/ui
+    build:
+      context: ./services/node/ui
+      dockerfile: Dockerfile
     environment:
       NEXT_PUBLIC_API_BASE: http://localhost:8001
     ports:
@@ -57,7 +65,9 @@ services:
 
   # ===== Node 2 =====
   node2-api:
-    build: ./services/node/api
+    build:
+      context: .
+      dockerfile: ./services/node/api/Dockerfile
     environment:
       NODE_ID: node2
       STORAGE_ROOT: /storage
@@ -72,7 +82,9 @@ services:
       - node2-redis
 
   node2-worker:
-    build: ./services/node/worker
+    build:
+      context: .
+      dockerfile: ./services/node/worker/Dockerfile
     environment:
       NODE_ID: node2
       STORAGE_ROOT: /storage
@@ -90,7 +102,9 @@ services:
       - "63792:6379"
 
   node2-ui:
-    build: ./services/node/ui
+    build:
+      context: ./services/node/ui
+      dockerfile: Dockerfile
     environment:
       NEXT_PUBLIC_API_BASE: http://localhost:8002
     ports:
@@ -100,7 +114,9 @@ services:
 
   # ===== Node 3 =====
   node3-api:
-    build: ./services/node/api
+    build:
+      context: .
+      dockerfile: ./services/node/api/Dockerfile
     environment:
       NODE_ID: node3
       STORAGE_ROOT: /storage
@@ -115,7 +131,9 @@ services:
       - node3-redis
 
   node3-worker:
-    build: ./services/node/worker
+    build:
+      context: .
+      dockerfile: ./services/node/worker/Dockerfile
     environment:
       NODE_ID: node3
       STORAGE_ROOT: /storage
@@ -133,7 +151,9 @@ services:
       - "63793:6379"
 
   node3-ui:
-    build: ./services/node/ui
+    build:
+      context: ./services/node/ui
+      dockerfile: Dockerfile
     environment:
       NEXT_PUBLIC_API_BASE: http://localhost:8003
     ports:
