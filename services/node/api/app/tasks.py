@@ -250,18 +250,24 @@ def run_inference_task(
             gradcam = GradCAM(model, target_layer)
             
             for i, (img_path, img_tensor) in enumerate(zip(image_paths, images_tensors)):
-                heatmap, _ = gradcam.generate(img_tensor, device=settings.DEVICE)
-                
-                # Save overlay
+                # Load original image to get dimensions
                 img = Image.open(img_path).convert('RGB')
                 import numpy as np
                 img_np = np.array(img).astype(np.float32) / 255.0
                 
+                # Generate heatmap and resize to match original image dimensions
+                heatmap, _ = gradcam.generate(img_tensor, device=settings.DEVICE)
+                
+                # Resize heatmap to match original image size (H, W)
+                import cv2
+                heatmap_resized = cv2.resize(heatmap, (img_np.shape[1], img_np.shape[0]))
+                
+                # Save overlay
                 overlay_path = os.path.join(
                     settings.RESULTS_DIR, "inference",
                     f"{job_id}_{i}_gradcam.png"
                 )
-                save_gradcam_overlay(img_np, heatmap, overlay_path)
+                save_gradcam_overlay(img_np, heatmap_resized, overlay_path)
                 gradcam_paths.append(overlay_path)
         else:
             gradcam_paths = [None] * len(image_paths)
@@ -349,9 +355,12 @@ def federated_training_task(
         # Get round plan
         plan = client.get_round_plan(round_id)
         model_name = plan.get('model_name', 'resnet18')
-        num_epochs = plan.get('num_epochs', 5)
-        learning_rate = plan.get('learning_rate', 0.001)
-        batch_size = plan.get('batch_size', 32)
+        
+        # Get hyperparameters from plan
+        hyperparams = plan.get('hyperparameters', {})
+        num_epochs = hyperparams.get('num_epochs', 5)
+        learning_rate = hyperparams.get('learning_rate', 0.001)
+        batch_size = hyperparams.get('batch_size', 32)
         
         # Step 2: Load dataset
         print(f"[{settings.NODE_ID}] Step 2: Loading local dataset...")

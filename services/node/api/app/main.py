@@ -358,6 +358,87 @@ def get_training_status(job_id: str, db: Session = Depends(get_db)):
 # Inference Endpoints
 # ============================================================================
 
+@app.get("/api/infer/browse")
+def browse_hospital_images(
+    directory: str = "/hospital_data",
+    db: Session = Depends(get_db)
+):
+    """
+    Browse available images in hospital data directories.
+    
+    This helps UI users select images without uploading them.
+    Images remain in their original location (on-premise security).
+    
+    Args:
+        directory: Path to directory to browse (must be in allowed list)
+    
+    Returns:
+        List of image files with metadata
+    """
+    # Security: restrict to allowed directories only
+    allowed_dirs = [
+        "/hospital_data",
+        "/mnt/radiology",
+        os.path.join(settings.STORAGE_ROOT, "test_images"),
+        os.path.join(settings.STORAGE_ROOT, "datasets")
+    ]
+    
+    # Check if directory is allowed
+    if not any(directory.startswith(allowed) for allowed in allowed_dirs):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Access to directory '{directory}' is not allowed. Allowed directories: {allowed_dirs}"
+        )
+    
+    if not os.path.exists(directory):
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Directory not found: {directory}"
+        )
+    
+    # List image files
+    image_extensions = {'.jpg', '.jpeg', '.png', '.dcm', '.dicom', '.tif', '.tiff'}
+    files = []
+    subdirs = []
+    
+    try:
+        for item in os.listdir(directory):
+            item_path = os.path.join(directory, item)
+            
+            if os.path.isdir(item_path):
+                subdirs.append({
+                    "name": item,
+                    "path": item_path,
+                    "type": "directory"
+                })
+            elif os.path.isfile(item_path):
+                ext = os.path.splitext(item)[1].lower()
+                if ext in image_extensions:
+                    files.append({
+                        "name": item,
+                        "path": item_path,
+                        "size": os.path.getsize(item_path),
+                        "type": "file",
+                        "extension": ext,
+                        "modified": datetime.fromtimestamp(
+                            os.path.getmtime(item_path)
+                        ).isoformat()
+                    })
+    except PermissionError:
+        raise HTTPException(
+            status_code=403,
+            detail=f"No permission to read directory: {directory}"
+        )
+    
+    return {
+        "directory": directory,
+        "subdirectories": subdirs,
+        "files": files,
+        "total_files": len(files),
+        "total_subdirs": len(subdirs)
+    }
+
+
 @app.post("/api/infer", response_model=InferResponse)
 async def run_inference(
     request: InferRequest,
@@ -365,11 +446,45 @@ async def run_inference(
     db: Session = Depends(get_db)
 ):
     """
-    Run inference on images.
+    Run inference on images at specified filesystem paths.
     
-    Creates a Celery task for inference.
+    IMPORTANT - On-Premise Medical Imaging:
+    - Images must already exist on the server filesystem
+    - Paths should be absolute paths to mounted volumes
+    - Images are NOT uploaded - they are read from existing locations
+    - This ensures medical data never leaves the hospital premises
+    - Only inference results (predictions, Grad-CAM) are stored
+    
+    Example paths:
+    - /hospital_data/studies/patient_001/chest_xray.jpg
+    - /mnt/radiology/2024/04/study_12345.dcm
+    - /storage/datasets/dataset_train_abc123/NORMAL/image001.jpeg
+    
+    Args:
+        request: InferRequest with image_paths, model_id, generate_gradcam
+    
+    Returns:
+        Job information (job_id, task_id, status)
     """
     from .tasks import run_inference_task
+    
+    # Validate that all image paths exist and are readable
+    for path in request.image_paths:
+        if not os.path.exists(path):
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Image path does not exist: {path}"
+            )
+        if not os.path.isfile(path):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Path is not a file: {path}"
+            )
+        if not os.access(path, os.R_OK):
+            raise HTTPException(
+                status_code=403,
+                detail=f"No read permission for path: {path}"
+            )
     
     # Create job record
     job_id = f"infer_{uuid.uuid4().hex[:8]}"
@@ -426,6 +541,37 @@ def get_inference_results(job_id: str, db: Session = Depends(get_db)):
             for r in results
         ]
     }
+
+
+@app.get("/api/infer/image")
+def serve_image(path: str):
+    """
+    Serve an image file for viewing in UI.
+    
+    Security: Only serves images from allowed directories.
+    """
+    # Security: restrict to allowed directories
+    allowed_dirs = [
+        "/storage/datasets",
+        "/storage/results",
+        "/hospital_data",
+        "/mnt/radiology"
+    ]
+    
+    # Check if path is in allowed directories
+    if not any(path.startswith(allowed) for allowed in allowed_dirs):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Access to path '{path}' is not allowed"
+        )
+    
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Image not found")
+    
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=400, detail="Path is not a file")
+    
+    return FileResponse(path)
 
 
 # ============================================================================

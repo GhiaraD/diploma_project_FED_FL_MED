@@ -245,7 +245,7 @@ class FedAvgAggregator:
         
         Args:
             round_id: Round identifier
-            remove_outliers: Whether to remove outlier updates
+            remove_outliers: Whether to remove outlier updates (not implemented yet)
             
         Returns:
             Aggregated delta state dict
@@ -264,28 +264,68 @@ class FedAvgAggregator:
         # Calculate total samples
         total_samples = sum(u['n_samples'] for u in updates)
         
-        # Initialize aggregated delta
-        aggregated_delta = {}
+        # Validate consistency
         first_delta = updates[0]['delta']
+        for update in updates:
+            if update['delta'].keys() != first_delta.keys():
+                raise ValueError("Inconsistent model structure across clients")
         
+        # Initialize aggregated delta (preserve dtype for non-float tensors)
+        aggregated_delta = {}
         for key in first_delta.keys():
-            aggregated_delta[key] = torch.zeros_like(first_delta[key])
+            original_dtype = first_delta[key].dtype
+            # Use float32 for float tensors (stability), preserve dtype for others
+            if original_dtype in [torch.float32, torch.float64, torch.float16]:
+                aggregated_delta[key] = torch.zeros_like(first_delta[key], dtype=torch.float32)
+            else:
+                # Keep original dtype for integer/long tensors (e.g., num_batches_tracked)
+                aggregated_delta[key] = torch.zeros_like(first_delta[key], dtype=original_dtype)
         
         # Weighted aggregation
+        if total_samples > 0:
+            print(f"[Central] Using weighted average (total_samples={total_samples})")
+        else:
+            print(f"[Central] Using simple average (total_samples=0)")
+        
         for update in updates:
-            weight = update['n_samples'] / total_samples
+            weight = (update['n_samples'] / total_samples 
+                     if total_samples > 0 
+                     else 1.0 / len(updates))
             delta = update['delta']
             
             for key in aggregated_delta.keys():
                 if key in delta:
-                    aggregated_delta[key] += weight * delta[key]
+                    agg_tensor = aggregated_delta[key]
+                    delta_tensor = delta[key]
+                    
+                    # Only aggregate float tensors (skip integer buffers like num_batches_tracked)
+                    if agg_tensor.dtype in [torch.float32, torch.float64, torch.float16]:
+                        # Align device + dtype (CRITICAL FIX)
+                        delta_tensor = delta_tensor.to(
+                            device=agg_tensor.device,
+                            dtype=agg_tensor.dtype
+                        )
+                        aggregated_delta[key] += weight * delta_tensor
+                    else:
+                        # For integer tensors, just take the first value (no averaging)
+                        if update == updates[0]:
+                            aggregated_delta[key] = delta_tensor.to(device=agg_tensor.device)
         
-        # Calculate aggregation statistics (only float tensors)
-        agg_norm = sum(
-            torch.norm(d.float()).item() ** 2 
-            for d in aggregated_delta.values() 
-            if d.dtype in [torch.float32, torch.float64, torch.float16]
-        ) ** 0.5
+        # Convert back to original dtype for float tensors that were promoted to float32
+        for key in aggregated_delta.keys():
+            original_dtype = first_delta[key].dtype
+            current_dtype = aggregated_delta[key].dtype
+            # Only convert if we promoted to float32 for aggregation
+            if (original_dtype in [torch.float64, torch.float16] and 
+                current_dtype == torch.float32):
+                aggregated_delta[key] = aggregated_delta[key].to(original_dtype)
+        
+        # Calculate aggregation statistics (stable version)
+        agg_norm = torch.sqrt(
+            sum(torch.norm(d.float()) ** 2 
+                for d in aggregated_delta.values() 
+                if d.dtype in [torch.float32, torch.float64, torch.float16])
+        ).item()
         
         print(f"[Central] ✓ Aggregation complete")
         print(f"[Central]   - Total samples: {total_samples}")
@@ -315,11 +355,31 @@ class FedAvgAggregator:
         new_state = {}
         
         for key in base_model_state.keys():
+            base_tensor = base_model_state[key]
+            
             if key in aggregated_delta:
-                new_state[key] = base_model_state[key] + aggregated_delta[key]
+                delta_tensor = aggregated_delta[key]
+                
+                # Verificare shape
+                if base_tensor.shape != delta_tensor.shape:
+                    raise ValueError(
+                        f"Shape mismatch for key '{key}': "
+                        f"{base_tensor.shape} vs {delta_tensor.shape}"
+                    )
+                
+                # Aplicăm delta DOAR pe tensori float
+                if base_tensor.dtype in [torch.float32, torch.float64, torch.float16]:
+                    delta_tensor = delta_tensor.to(
+                        device=base_tensor.device,
+                        dtype=base_tensor.dtype
+                    )
+                    new_state[key] = base_tensor + delta_tensor
+                else:
+                    # Nu modificăm tensori non-float (ex: buffers, embeddings index)
+                    new_state[key] = base_tensor
             else:
-                # Keep original if no delta (shouldn't happen)
-                new_state[key] = base_model_state[key]
+                # Fallback (nu ar trebui să se întâmple)
+                new_state[key] = base_tensor
         
         print(f"[Central] ✓ New global model created")
         
@@ -362,8 +422,15 @@ class FedAvgAggregator:
             if not is_valid:
                 raise ValueError(f"Validation failed: {issues}")
         
-        # Load base model
-        base_model_state = torch.load(round_data['base_model_path'])
+        # Detect device (prefer GPU if available)
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"[Central] Using device: {device}")
+        
+        # Load base model on detected device
+        base_model_state = torch.load(
+            round_data['base_model_path'],
+            map_location=device  # Load directly on GPU if available
+        )
         
         # Aggregate deltas
         aggregated_delta = self.aggregate_deltas(round_id)
@@ -373,29 +440,36 @@ class FedAvgAggregator:
         
         # Save new global model
         new_model_path = self.models_dir / f"global_{round_id}_aggregated.pt"
-        torch.save(new_global_state, new_model_path)
+        try:
+            torch.save(new_global_state, new_model_path)
+        except Exception as e:
+            raise RuntimeError(f"Failed to save model: {e}")
         
         # Compute new model hash
         new_hash = compute_model_hash(new_global_state)
         
-        # Aggregate metrics
+        # Aggregate metrics (fără bias din valori lipsă)
         updates = round_data['updates']
         total_samples = sum(u['n_samples'] for u in updates)
         
         aggregated_metrics = {}
         
-        # Weighted average of metrics
         for metric_name in ['accuracy', 'f1', 'auc', 'precision', 'recall']:
-            values = [u['metrics'].get(metric_name, 0) for u in updates]
+            pairs = [
+                (u['metrics'][metric_name], u['n_samples'])
+                for u in updates
+                if metric_name in u['metrics']
+            ]
             
-            # If total_samples is 0, use equal weights (simple average)
+            if not pairs:
+                continue
+            
             if total_samples > 0:
-                weights = [u['n_samples'] / total_samples for u in updates]
+                aggregated_metrics[metric_name] = sum(
+                    v * (n / total_samples) for v, n in pairs
+                )
             else:
-                weights = [1.0 / len(updates) for _ in updates]
-            
-            if any(v > 0 for v in values):
-                aggregated_metrics[metric_name] = sum(v * w for v, w in zip(values, weights))
+                aggregated_metrics[metric_name] = sum(v for v, _ in pairs) / len(pairs)
         
         # Update round data
         round_data['status'] = 'aggregated'

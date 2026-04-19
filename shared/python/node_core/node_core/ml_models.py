@@ -113,7 +113,9 @@ def load_model(model_name: str, path: str, device: str = 'cpu') -> tuple:
     Returns:
         Tuple of (model, metadata_dict)
     """
-    checkpoint = torch.load(path, map_location=device)
+    # PyTorch 2.6+ requires weights_only=False for models with numpy arrays
+    # This is safe for our own trained models
+    checkpoint = torch.load(path, map_location=device, weights_only=False)
     
     # Handle both old format (just state_dict) and new format (dict with metadata)
     if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:

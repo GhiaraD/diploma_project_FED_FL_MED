@@ -124,6 +124,14 @@ test-e2e:
 test-e2e-manual:
 	./scripts/test_e2e_fl_workflow.sh
 
+# Test inference (on-premise workflow)
+test-inference:
+	./scripts/test_inference_onpremise.sh
+
+# Test inference complete (NORMAL, PNEUMONIA, batch)
+test-inference-complete:
+	./scripts/test_inference_complete.sh
+
 # Help
 help:
 	@echo "Fed-Med-FL - Makefile Commands"
@@ -163,6 +171,8 @@ help:
 	@echo "  make test-ui         - Test node UIs"
 	@echo "  make test-e2e        - Run automated end-to-end FL test"
 	@echo "  make test-e2e-manual - Run manual end-to-end FL test"
+	@echo "  make test-inference  - Test on-premise inference workflow"
+	@echo "  make test-inference-complete - Test complete inference (NORMAL, PNEUMONIA, batch)"
 	@echo "  make status          - Check service status"
 	@echo ""
 	@echo "Other:"
