@@ -681,6 +681,82 @@ def get_federated_status(round_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/federated/history")
+def get_federated_history(db: Session = Depends(get_db)):
+    """
+    Get history of all federated learning rounds this node participated in.
+    
+    Returns rounds sorted by most recent first, with active rounds at the top.
+    """
+    from node_core import FederatedClient
+    import requests
+    
+    # Get all FL training jobs from database
+    jobs = db.query(Job).filter(
+        Job.job_type == "federated_train"
+    ).order_by(Job.created_at.desc()).all()
+    
+    # Get unique round IDs
+    round_ids = list(set([job.params.get("round_id") for job in jobs if job.params.get("round_id")]))
+    
+    # Fetch status for each round from central server
+    rounds_history = []
+    
+    for round_id in round_ids:
+        try:
+            # Get central server status
+            response = requests.get(
+                f"{settings.CENTRAL_URL}/round/{round_id}/status",
+                timeout=5
+            )
+            
+            if response.ok:
+                central_status = response.json()
+            else:
+                central_status = None
+        except:
+            central_status = None
+        
+        # Get local jobs for this round
+        round_jobs = [j for j in jobs if j.params.get("round_id") == round_id]
+        latest_job = round_jobs[0] if round_jobs else None
+        
+        # Get model info if exists
+        model = db.query(Model).filter(
+            Model.round_id == round_id
+        ).order_by(Model.created_at.desc()).first()
+        
+        # Determine if round is active
+        is_active = False
+        if central_status:
+            central_round_status = central_status.get("status", "")
+            is_active = central_round_status in ["created", "training", "collecting"]
+        
+        # Build round info
+        round_info = {
+            "round_id": round_id,
+            "is_active": is_active,
+            "local_status": latest_job.status if latest_job else "not_started",
+            "job_id": latest_job.job_id if latest_job else None,
+            "created_at": latest_job.created_at.isoformat() if latest_job else None,
+            "completed_at": latest_job.completed_at.isoformat() if latest_job and latest_job.completed_at else None,
+            "model_id": model.model_id if model else None,
+            "model_type": model.type if model else None,
+            "metrics": latest_job.result.get("metrics") if latest_job and latest_job.result else None,
+            "central_status": central_status
+        }
+        
+        rounds_history.append(round_info)
+    
+    # Sort: active rounds first, then by created_at descending
+    rounds_history.sort(key=lambda x: (not x["is_active"], x["created_at"] or ""), reverse=True)
+    
+    return {
+        "total_rounds": len(rounds_history),
+        "rounds": rounds_history
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host=settings.API_HOST, port=settings.API_PORT)
