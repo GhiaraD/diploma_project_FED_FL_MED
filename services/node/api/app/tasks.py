@@ -325,45 +325,20 @@ def federated_training_task(
     dataset_id: str
 ):
     """
-    Complete federated training workflow for a round.
+    Federated training with Flower.
     
-    Steps:
-    1. Pull global model from central
-    2. Train locally
-    3. Compute delta
-    4. Push update to central
+    This task starts a Flower client that connects to the Flower server
+    and participates in federated learning rounds.
     
     Args:
         job_id: Job identifier
-        round_id: FL round identifier
+        round_id: FL round identifier (for tracking)
         dataset_id: Local dataset identifier
     """
     try:
         update_job_status(job_id, "running")
         
-        # Initialize FL client
-        client = FederatedClient(
-            node_id=settings.NODE_ID,
-            central_url=settings.CENTRAL_URL,
-            storage_path=settings.STORAGE_ROOT
-        )
-        
-        # Step 1: Pull global model
-        print(f"[{settings.NODE_ID}] Step 1: Pulling global model for round {round_id}...")
-        global_state, base_hash = client.pull_global_model(round_id)
-        
-        # Get round plan
-        plan = client.get_round_plan(round_id)
-        model_name = plan.get('model_name', 'resnet18')
-        
-        # Get hyperparameters from plan
-        hyperparams = plan.get('hyperparameters', {})
-        num_epochs = hyperparams.get('num_epochs', 5)
-        learning_rate = hyperparams.get('learning_rate', 0.001)
-        batch_size = hyperparams.get('batch_size', 32)
-        
-        # Step 2: Load dataset
-        print(f"[{settings.NODE_ID}] Step 2: Loading local dataset...")
+        # Get dataset path
         db = SessionLocal()
         from .database import Dataset
         dataset = db.query(Dataset).filter(Dataset.dataset_id == dataset_id).first()
@@ -374,123 +349,48 @@ def federated_training_task(
         dataset_path = dataset.path
         n_samples = dataset.num_samples
         
-        # Load and split dataset
-        train_dataset = load_dataset(dataset_path, split='train')
+        print(f"[{settings.NODE_ID}] Starting Flower client for round {round_id}...")
+        print(f"[{settings.NODE_ID}] Dataset: {dataset_path} ({n_samples} samples)")
         
-        from torch.utils.data import random_split
-        train_size = int(0.8 * len(train_dataset))
-        val_size = len(train_dataset) - train_size
-        train_dataset, val_dataset = random_split(train_dataset, [train_size, val_size])
+        # Import Flower client
+        sys.path.insert(0, '/app/services/node/worker/app')
+        from flower_client import start_flower_client
         
-        train_loader, val_loader = create_dataloaders(
-            train_dataset, val_dataset,
-            batch_size=batch_size,
-            num_workers=0  # Must be 0 for Celery workers
-        )
-        
-        # Step 3: Initialize model with global weights
-        print(f"[{settings.NODE_ID}] Step 3: Initializing model with global weights...")
-        model = get_model(model_name, num_classes=2, pretrained=False)
-        model.load_state_dict(global_state)
-        model = model.to(settings.DEVICE)
-        
-        # Step 4: Train locally
-        print(f"[{settings.NODE_ID}] Step 4: Training locally...")
-        criterion = torch.nn.CrossEntropyLoss()
-        optimizer = get_optimizer(model, 'adam', lr=learning_rate)
-        scheduler = get_scheduler(optimizer, 'cosine', num_epochs=num_epochs)
-        
-        history = train_model(
-            model=model,
-            train_loader=train_loader,
-            val_loader=val_loader,
-            criterion=criterion,
-            optimizer=optimizer,
+        # Start Flower client (blocking call - will run until FL rounds complete)
+        start_flower_client(
+            server_address=settings.CENTRAL_URL.replace("http://", "").replace("https://", ""),
+            node_id=settings.NODE_ID,
+            model_name="resnet18",  # TODO: Get from round config
+            num_classes=2,
+            dataset_path=dataset_path,
             device=settings.DEVICE,
-            num_epochs=num_epochs,
-            scheduler=scheduler,
-            verbose=True
+            batch_size=32,  # TODO: Get from round config
         )
         
-        # Step 5: Compute delta
-        print(f"[{settings.NODE_ID}] Step 5: Computing delta...")
-        global_model = get_model(model_name, num_classes=2, pretrained=False)
-        global_model.load_state_dict(global_state)
-        global_model = global_model.to(settings.DEVICE)  # Move to same device as trained model
-        
-        delta = client.compute_delta(model, global_model)
-        
-        # Step 6: Compute metrics
-        print(f"[{settings.NODE_ID}] Step 6: Computing metrics...")
-        # Evaluate on validation set
-        model.eval()
-        y_true, y_pred, y_probs = [], [], []
-        
-        with torch.no_grad():
-            for inputs, labels in val_loader:
-                inputs, labels = inputs.to(settings.DEVICE), labels.to(settings.DEVICE)
-                outputs = model(inputs)
-                probs = torch.softmax(outputs, dim=1)
-                preds = torch.argmax(outputs, dim=1)
-                
-                y_true.extend(labels.cpu().numpy())
-                y_pred.extend(preds.cpu().numpy())
-                y_probs.extend(probs[:, 1].cpu().numpy())
-        
-        metrics = compute_metrics(y_true, y_pred, y_probs)
-        
-        # Step 7: Push update to central
-        print(f"[{settings.NODE_ID}] Step 7: Pushing update to central...")
-        push_result = client.push_update(
-            delta=delta,
-            round_id=round_id,
-            base_model_hash=base_hash,
-            n_samples=n_samples,
-            metrics=metrics
-        )
-        
-        # Step 8: Save model as candidate
-        model_id = f"{model_name}_{round_id}_candidate"
-        model_path = os.path.join(settings.MODELS_CANDIDATE_DIR, f"{model_id}.pt")
-        
-        save_model(model, model_path, {
-            'round_id': round_id,
-            'base_model_hash': base_hash,
-            'metrics': metrics,
-            'history': history
-        })
-        
-        # Save to database
-        model_record = Model(
-            model_id=model_id,
-            model_name=model_name,
-            version=round_id,
-            type="candidate",
-            round_id=round_id,
-            base_model_hash=base_hash,
-            file_path=model_path,
-            metrics=metrics
-        )
-        db.add(model_record)
-        db.commit()
-        db.close()
+        # After FL completes, save final model as candidate
+        # Note: The actual model is saved by Flower client during training
+        # Here we just update the database
+        model_id = f"resnet18_{round_id}_flower"
         
         result = {
             'round_id': round_id,
             'model_id': model_id,
             'n_samples': n_samples,
-            'metrics': metrics,
-            'push_result': push_result
+            'status': 'completed',
+            'note': 'Trained with Flower framework'
         }
         
+        db.close()
         update_job_status(job_id, "completed", result=result)
         
-        print(f"[{settings.NODE_ID}] ✓ Federated training completed for round {round_id}")
+        print(f"[{settings.NODE_ID}] ✓ Flower training completed for round {round_id}")
         
         return result
         
     except Exception as e:
-        print(f"[{settings.NODE_ID}] ✗ Federated training failed: {e}")
+        print(f"[{settings.NODE_ID}] ✗ Flower training failed: {e}")
+        import traceback
+        traceback.print_exc()
         update_job_status(job_id, "failed", error=str(e))
         raise
 

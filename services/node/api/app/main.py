@@ -587,26 +587,19 @@ async def join_federated_round(
     """
     Join a federated learning round.
     
-    Registers node participation with central server.
+    With Flower, this is informational only - the actual connection
+    happens when the Flower client starts.
     """
-    from node_core import FederatedClient
+    # Just log the intent to join
+    print(f"[{settings.NODE_ID}] Node will join round {round_id} when training starts")
     
-    client = FederatedClient(
-        node_id=settings.NODE_ID,
-        central_url=settings.CENTRAL_URL,
-        storage_path=settings.STORAGE_ROOT
-    )
-    
-    try:
-        result = client.join_round(round_id)
-        return {
-            "status": "success",
-            "round_id": round_id,
-            "node_id": settings.NODE_ID,
-            "message": f"Joined round {round_id}"
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return {
+        "status": "success",
+        "round_id": round_id,
+        "node_id": settings.NODE_ID,
+        "message": f"Node {settings.NODE_ID} will join round {round_id}",
+        "note": "Using Flower framework - connection happens during training"
+    }
 
 
 @app.post("/api/federated/train/{round_id}", response_model=JobCreateResponse)
@@ -651,34 +644,27 @@ async def start_federated_training(
 
 @app.get("/api/federated/status/{round_id}", response_model=FederatedStatusResponse)
 def get_federated_status(round_id: str, db: Session = Depends(get_db)):
-    """Get federated learning status for a round."""
-    from node_core import FederatedClient
+    """
+    Get federated learning status for a round.
     
-    client = FederatedClient(
-        node_id=settings.NODE_ID,
-        central_url=settings.CENTRAL_URL,
-        storage_path=settings.STORAGE_ROOT
-    )
+    With Flower, we check local job status only.
+    """
+    # Get local job status
+    job = db.query(Job).filter(
+        Job.job_type == "federated_train",
+        Job.params["round_id"].astext == round_id
+    ).order_by(Job.created_at.desc()).first()
     
-    try:
-        status = client.get_round_status(round_id)
-        
-        # Get local job status
-        job = db.query(Job).filter(
-            Job.job_type == "federated_train",
-            Job.params["round_id"].astext == round_id
-        ).order_by(Job.created_at.desc()).first()
-        
-        local_status = job.status if job else "not_started"
-        
-        return {
-            "round_id": round_id,
-            "node_id": settings.NODE_ID,
-            "local_status": local_status,
-            "central_status": status
+    local_status = job.status if job else "not_started"
+    
+    return {
+        "round_id": round_id,
+        "node_id": settings.NODE_ID,
+        "local_status": local_status,
+        "central_status": {
+            "note": "Using Flower framework - check Flower server logs for round status"
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    }
 
 
 @app.get("/api/federated/history")

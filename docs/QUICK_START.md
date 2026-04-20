@@ -32,9 +32,10 @@ make help  # Afișează toate comenzile
 ## Servicii Disponibile
 
 ### Central Server
-- **URL**: http://localhost:8080
-- **Health**: http://localhost:8080/health
-- **API Docs**: http://localhost:8080/docs
+- **Management API**: http://localhost:8081
+- **Flower gRPC**: localhost:8080
+- **Health**: http://localhost:8081/health
+- **API Docs**: http://localhost:8081/docs
 
 ### Node 1 (Hospital 1)
 - **API**: http://localhost:8001
@@ -53,14 +54,18 @@ make help  # Afișează toate comenzile
 
 ---
 
-## Workflow Federated Learning
+## Workflow Federated Learning (Flower Framework)
 
-### 1. Accesează UI-ul unui nod
+### Opțiunea 1: Folosind Flower Server Direct (Recomandat)
 
-Deschide în browser: http://localhost:3001
+#### 1. Upload Datasets la toate nodurile
 
-### 2. Upload Dataset (Studies)
+Accesează UI-ul fiecărui nod și upload dataset:
+- http://localhost:3001 (Node1)
+- http://localhost:3002 (Node2)
+- http://localhost:3003 (Node3)
 
+**Pași**:
 1. Click pe **Studies** în sidebar
 2. Click pe **Upload Dataset**
 3. Selectează split: `train`
@@ -77,10 +82,79 @@ Deschide în browser: http://localhost:3001
 5. Click **Upload**
 6. Notează `dataset_id` din tabel
 
-### 3. Creează Rundă FL (Central)
+#### 2. Start Flower Server (Central)
 
 ```bash
-curl -X POST http://localhost:8080/round/create \
+# În terminal separat
+docker compose exec central python -m app.flower_server
+```
+
+**Output așteptat**:
+```
+======================================================================
+FED-MED-FL FLOWER SERVER
+======================================================================
+Server address: 0.0.0.0:8080
+Number of rounds: 5
+Minimum clients: 2
+Model: resnet18
+======================================================================
+
+[Server] Starting Flower server...
+[Server] Waiting for 2 clients to connect...
+```
+
+#### 3. Start Flower Clients (Nodes)
+
+În terminale separate pentru fiecare nod:
+
+```bash
+# Node 1
+curl -X POST "http://localhost:8001/api/federated/train/R-FLOWER-1?dataset_id=<DATASET_ID>"
+
+# Node 2
+curl -X POST "http://localhost:8002/api/federated/train/R-FLOWER-1?dataset_id=<DATASET_ID>"
+
+# Node 3
+curl -X POST "http://localhost:8003/api/federated/train/R-FLOWER-1?dataset_id=<DATASET_ID>"
+```
+
+**Notă**: Înlocuiește `<DATASET_ID>` cu ID-ul dataset-ului uploadat.
+
+#### 4. Monitorizează Progresul
+
+Flower Server va afișa progresul în timp real:
+```
+[ROUND 1]
+configure_fit: strategy sampled 3 clients
+[FedMedStrategy] Round 1: Aggregating 3 clients
+[FedMedStrategy] ✓ Round 1 aggregation complete
+[FedMedStrategy] ✓ Model saved: /storage/models/global_R-1.pt
+
+[ROUND 2]
+...
+```
+
+#### 5. Verifică Rezultatele
+
+După completarea rundelor:
+```bash
+# Verifică modelele salvate
+ls -la storage/central/models/
+
+# Output:
+# global_R-0.pt  (initial model)
+# global_R-1.pt  (after round 1)
+# global_R-2.pt  (after round 2)
+# ...
+```
+
+### Opțiunea 2: Folosind Management API (Legacy)
+
+#### 1. Creează Rundă FL (Central)
+
+```bash
+curl -X POST http://localhost:8081/round/create \
   -H "Content-Type: application/json" \
   -d '{
     "round_id": "R-1",
@@ -96,14 +170,14 @@ curl -X POST http://localhost:8080/round/create \
   }'
 ```
 
-### 4. Join Round (UI - Federated)
+#### 2. Join Round (UI - Federated)
 
 1. Click pe **Federated** în sidebar
 2. Introdu Round ID: `R-1`
 3. Click **Join Round**
 4. Repetă pentru toate nodurile (3001, 3002, 3003)
 
-### 5. Start Training (UI - Federated)
+#### 3. Start Training (UI - Federated)
 
 1. În pagina **Federated**
 2. Introdu Dataset ID (din Studies)
@@ -111,18 +185,22 @@ curl -X POST http://localhost:8080/round/create \
 4. Monitorizează progresul în stepper
 5. Repetă pentru toate nodurile
 
-### 6. Trigger Aggregation (Central)
+---
+
+## Testing Rapid cu Simulare
+
+Pentru testare rapidă fără Docker:
 
 ```bash
-# Așteaptă ca toate nodurile să termine training
-# Apoi trigger aggregation
-curl -X POST http://localhost:8080/round/R-1/aggregate
-```
+# Rulează simulare cu clienți virtuali
+python3 shared/python/node_core/examples/flower_simulation.py \
+  --clients 3 \
+  --rounds 3 \
+  --epochs 2
 
-### 7. View Results
-
-```bash
-curl http://localhost:8080/round/R-1/results
+# Output:
+# ✅ 3 runde completate
+# ✅ Modele salvate: global_R-0.pt, global_R-1.pt, global_R-2.pt
 ```
 
 ---
@@ -297,9 +375,10 @@ docker compose logs -f node1-api
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    Central FL Server                         │
-│                   http://localhost:8080                      │
+│              http://localhost:8081 (Management)              │
+│              localhost:8080 (Flower gRPC)                    │
 └────────────────────────┬────────────────────────────────────┘
-                         │
+                         │ gRPC (Flower Protocol)
         ┌────────────────┼────────────────┐
         │                │                │
 ┌───────▼────────┐  ┌────▼──────┐  ┌─────▼─────────┐
@@ -307,6 +386,7 @@ docker compose logs -f node1-api
 │  :8001 :3001   │  │ :8002:3002│  │  :8003 :3003  │
 │                │  │           │  │               │
 │ API + Worker   │  │API+Worker │  │ API + Worker  │
+│ Flower Client  │  │Flower Cl. │  │ Flower Client │
 │ UI (Next.js)   │  │UI(Next.js)│  │ UI (Next.js)  │
 │ Redis          │  │Redis      │  │ Redis         │
 └────────────────┘  └───────────┘  └───────────────┘
@@ -318,7 +398,8 @@ docker compose logs -f node1-api
 
 | Service | Port | URL |
 |---------|------|-----|
-| Central | 8080 | http://localhost:8080 |
+| Central Management | 8081 | http://localhost:8081 |
+| Central Flower gRPC | 8080 | localhost:8080 |
 | Node1 API | 8001 | http://localhost:8001 |
 | Node1 UI | 3001 | http://localhost:3001 |
 | Node1 Redis | 63791 | localhost:63791 |
@@ -334,24 +415,20 @@ docker compose logs -f node1-api
 ## Next Steps
 
 1. **Upload datasets** la toate nodurile
-2. **Creează rundă FL** pe Central
-3. **Join round** de pe toate nodurile
-4. **Start training** pe toate nodurile
-5. **Trigger aggregation** pe Central
-6. **View results** și metrici
-7. **Repeat** pentru mai multe runde (R-2, R-3, etc.)
+2. **Start Flower Server** pe Central
+3. **Start Flower Clients** pe toate nodurile
+4. **Monitorizează progresul** în logs
+5. **Verifică modelele salvate** în storage/central/models/
+6. **Repeat** pentru mai multe runde
 
----
-
-## Resources
-
-- **Documentation**: `docs/`
-- **Scripts**: `scripts/`
-- **Examples**: `shared/python/node_core/examples/`
-- **Tests**: `shared/python/node_core/tests/`
+**Sau folosește simularea**:
+```bash
+python3 shared/python/node_core/examples/flower_simulation.py --clients 3 --rounds 3
+```
 
 ---
 
 **Autor**: Fed-Med-FL Team  
-**Versiune**: 0.1.0  
+**Versiune**: 0.2.0  
+**FL Framework**: Flower 1.29+  
 **Status**: ✅ PRODUCTION READY

@@ -17,7 +17,8 @@ RUN pip install --no-cache-dir -e /app/shared/python/node_core
 # Install Central dependencies
 RUN pip install --no-cache-dir \
     fastapi==0.104.1 \
-    uvicorn[standard]==0.24.0
+    uvicorn[standard]==0.24.0 \
+    flwr>=1.8.0
 
 # Copy Central code
 COPY services/central/app /app/app

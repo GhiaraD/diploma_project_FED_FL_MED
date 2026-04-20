@@ -18,7 +18,8 @@ RUN pip install --no-cache-dir -e /app/shared/python/node_core
 RUN pip install --no-cache-dir \
     celery==5.3.4 \
     redis==5.0.1 \
-    sqlalchemy==2.0.23
+    sqlalchemy==2.0.23 \
+    flwr>=1.8.0
 
 # Copy worker and API code (worker needs API for tasks)
 COPY services/node/worker/app /app/worker

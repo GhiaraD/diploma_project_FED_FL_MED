@@ -54,20 +54,8 @@ from .data_utils import (
 
 from .utils_hash import compute_model_hash
 
-# Federated Learning
-from .fl_client import FederatedClient
-from .fl_aggregator import FedAvgAggregator
-from .fl_utils import (
-    compute_delta_statistics,
-    compare_models,
-    scale_delta,
-    clip_delta,
-    add_noise_to_delta,
-    compute_cosine_similarity,
-    check_model_compatibility,
-    compute_update_quality_score,
-    simulate_fl_round
-)
+# Federated Learning - Flower Integration
+from .flower_strategy import FedMedStrategy, create_fedmed_strategy
 
 __all__ = [
     # ML Models
@@ -115,16 +103,7 @@ __all__ = [
     # Utils
     'compute_model_hash',
     
-    # Federated Learning
-    'FederatedClient',
-    'FedAvgAggregator',
-    'compute_delta_statistics',
-    'compare_models',
-    'scale_delta',
-    'clip_delta',
-    'add_noise_to_delta',
-    'compute_cosine_similarity',
-    'check_model_compatibility',
-    'compute_update_quality_score',
-    'simulate_fl_round',
+    # Federated Learning - Flower
+    'FedMedStrategy',
+    'create_fedmed_strategy',
 ]

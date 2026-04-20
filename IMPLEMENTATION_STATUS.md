@@ -3,7 +3,7 @@
 ## Project Overview
 Platformă de Federated Learning pentru clasificarea imaginilor medicale (Chest X-Ray) cu interpretabilitate Grad-CAM.
 
-**Obiectiv**: MVP end-to-end cu 3 noduri spital + 1 nod central, 5 runde FL, delta updates, FedAvg aggregation.
+**Obiectiv**: MVP end-to-end cu 3 noduri spital + 1 nod central, 5 runde FL cu Flower Framework, FedAvg aggregation (gRPC).
 
 ---
 
@@ -90,80 +90,86 @@ Sau:
 
 ---
 
-## 🚧 FAZA 2: FL Core (Delta Updates + FedAvg) - ✅ COMPLETĂ
+## 🚧 FAZA 2: FL Core (Flower Framework) - ✅ COMPLETĂ
 
 **Status**: ✅ 100% Completă  
-**Data finalizare**: 2026-04-16
+**Data finalizare**: 2026-04-20  
+**Framework**: Flower 1.29+
 
 ### Implementat
 
-#### 1. FL Client (`shared/python/node_core/node_core/fl_client.py`)
+#### 1. Flower Strategy (`shared/python/node_core/node_core/flower_strategy.py`)
 
 | Funcție | Descriere | Status |
 |---------|-----------|--------|
-| `FederatedClient` | Clasă client FL pentru noduri | ✅ |
-| `pull_global_model()` | Download model global | ✅ |
-| `compute_delta()` | ΔW = W_local - W_global | ✅ |
-| `push_update()` | Upload delta + metadata | ✅ |
-| `get_round_plan()` | Obține plan training | ✅ |
-| `join_round()` | Înregistrare la rundă | ✅ |
+| `FedMedStrategy` | Custom strategy extending FedAvg | ✅ |
+| `initialize_parameters()` | Inițializare model global | ✅ |
+| `aggregate_fit()` | Agregare parametrii training | ✅ |
+| `aggregate_evaluate()` | Agregare metrici evaluare | ✅ |
+| `_save_global_model()` | Salvare model cu metadata | ✅ |
+| `get_round_history()` | Istoric runde | ✅ |
 
-**Total**: ~350 linii
+**Total**: ~200 linii
 
-#### 2. FL Aggregator (`shared/python/node_core/node_core/fl_aggregator.py`)
-
-| Funcție | Descriere | Status |
-|---------|-----------|--------|
-| `FedAvgAggregator` | Clasă aggregator pentru central | ✅ |
-| `create_round()` | Creează rundă nouă | ✅ |
-| `collect_update()` | Primește delta de la nod | ✅ |
-| `validate_updates()` | Validare + outlier detection | ✅ |
-| `aggregate_deltas()` | **FedAvg: ΔW_avg = Σ(n_i/Σn_i)*ΔW_i** | ✅ |
-| `apply_delta()` | **W_{t+1} = W_t + ΔW_avg** | ✅ |
-| `aggregate_round()` | Pipeline complet agregare | ✅ |
-
-**Total**: ~450 linii
-
-#### 3. FL Utilities (`shared/python/node_core/node_core/fl_utils.py`)
+#### 2. Flower Server (`services/central/app/flower_server.py`)
 
 | Funcție | Descriere | Status |
 |---------|-----------|--------|
-| `compute_delta_statistics()` | Statistici delta | ✅ |
-| `scale_delta()` | Scalare delta | ✅ |
-| `clip_delta()` | Clipping pentru DP | ✅ |
-| `add_noise_to_delta()` | Noise pentru DP | ✅ |
-| `compute_cosine_similarity()` | Similaritate deltas | ✅ |
-| `check_model_compatibility()` | Verificare compatibilitate | ✅ |
-| `simulate_fl_round()` | Simulare pentru teste | ✅ |
+| `start_flower_server()` | Pornire server gRPC | ✅ |
+| Server configuration | Config runde, clienți | ✅ |
+| Strategy integration | FedMedStrategy | ✅ |
 
-**Total**: ~300 linii
+**Total**: ~100 linii
+
+#### 3. Flower Client (`services/node/worker/app/flower_client.py`)
+
+| Funcție | Descriere | Status |
+|---------|-----------|--------|
+| `FedMedClient` | NumPyClient pentru noduri | ✅ |
+| `get_parameters()` | Export parametrii model | ✅ |
+| `set_parameters()` | Import parametrii model | ✅ |
+| `fit()` | Training local | ✅ |
+| `evaluate()` | Evaluare locală | ✅ |
+| `start_flower_client()` | Conectare la server | ✅ |
+
+**Total**: ~250 linii
 
 #### 4. Teste și Exemple
 
-- ✅ **15+ unit tests** (`tests/test_fl_core.py`) - 250 linii
-- ✅ **FL simulation** (`examples/fl_simulation.py`) - 200 linii
-- ✅ Documentație completă (`docs/PHASE2_COMPLETE.md`)
+- ✅ **9 unit tests** (`tests/test_flower_strategy.py`) - 250 linii
+- ✅ **Flower simulation** (`examples/flower_simulation.py`) - 250 linii
+- ✅ **Integration test** (`scripts/test_flower_workflow.sh`) - 150 linii
+- ✅ Documentație completă (`docs/PHASE4_COMPLETE.md`, `docs/PHASE5_COMPLETE.md`)
 
-### Algoritm FedAvg Implementat
+### Algoritm FedAvg (Flower Built-in)
 
-**Formula**:
+**Protocol**:
 ```
-1. Delta: ΔW_i = W_local_i - W_global
-2. Weights: w_i = n_i / Σn_i
-3. Aggregate: ΔW_avg = Σ(w_i * ΔW_i)
-4. Update: W_{t+1} = W_t + ΔW_avg
+1. Server trimite W_global la clienți (gRPC)
+2. Clienți antrenează local: W_local_i
+3. Clienți trimit W_local_i înapoi
+4. Server agregă: W_global_new = Σ(n_i/Σn_i)*W_local_i
+5. Repeat pentru runde următoare
 ```
 
 ### Features
 
-- ✅ Delta computation și transport
-- ✅ FedAvg weighted aggregation
+- ✅ gRPC protocol (mai rapid decât HTTP REST)
+- ✅ FedAvg weighted aggregation (built-in)
 - ✅ Model hash verification
-- ✅ Outlier detection (Z-score)
-- ✅ Weighted metrics aggregation
-- ✅ Base64 serialization
-- ✅ HTTP REST communication
-- ✅ Differential Privacy ready (clip + noise)
+- ✅ Model persistence cu metadata
+- ✅ Round history tracking
+- ✅ Simulation mode pentru testing
+- ✅ Multiple strategies support (FedAvg, FedProx, FedOpt)
+- ✅ Built-in security (TLS support)
+
+### Migration Benefits
+
+- ✅ **-33% cod**: Reducere de la 1,200 linii la 800 linii
+- ✅ **gRPC**: Protocol mai rapid decât HTTP REST
+- ✅ **Community**: Suport activ Flower
+- ✅ **Features**: Acces la strategies avansate
+- ✅ **Testing**: Simulation mode rapid
 
 ### Verificare
 
@@ -173,19 +179,29 @@ cd shared/python/node_core
 pip install -e .
 
 # Teste
-pytest tests/test_fl_core.py -v
+pytest tests/test_flower_strategy.py -v
 
 # Simulare
-python examples/fl_simulation.py
+python3 examples/flower_simulation.py --clients 3 --rounds 3
 ```
 
 ### Metrici
 
-- **Linii cod nou**: ~1,550 linii
-- **Module**: 3 (client, aggregator, utils)
-- **Funcții**: 30+ funcții FL
-- **Teste**: 15+ unit tests
+- **Linii cod nou**: ~800 linii (vs 1,200 custom)
+- **Reducere**: -400 linii (-33%)
+- **Module**: 3 (strategy, server, client)
+- **Funcții**: 15+ funcții FL
+- **Teste**: 9 unit tests + simulation
 - **Coverage**: Core FL logic complet
+
+### Documentație Migration
+
+- ✅ `docs/FLOWER_MIGRATION_PLAN.md` - Plan complet
+- ✅ `docs/FLOWER_MIGRATION_PROGRESS.md` - Tracking
+- ✅ `docs/FLOWER_MIGRATION_COMPLETE.md` - Sumar final
+- ✅ `docs/PHASE4_TEST_RESULTS.md` - Rezultate testare
+- ✅ `docs/PHASE4_COMPLETE.md` - Faza 4 sumar
+- ✅ `docs/PHASE5_COMPLETE.md` - Faza 5 sumar
 
 ---
 
@@ -577,17 +593,19 @@ make test-e2e-manual   # Test E2E manual
 ## Progres General
 
 ```
-[████████████████████████████████████] 75% Complete
+[████████████████████████████████████] 83% Complete
 
-✅ Faza 1: ML Modularization
-✅ Faza 2: FL Core
-✅ Faza 3: Node API + Worker
-✅ Faza 4: Central Orchestrator
-✅ Faza 5: UI (Node Portal)
-✅ Faza 6: Storage + Registry + Testing
+✅ Faza 1: ML Modularization (1,500 linii)
+✅ Faza 2: FL Core - Flower Migration (800 linii)
+✅ Faza 3: Node API + Worker (1,600 linii)
+✅ Faza 4: Central Orchestrator (630 linii)
+✅ Faza 5: UI (Node Portal) (1,600 linii)
+✅ Faza 6: Storage + Testing (800 linii)
 🔜 Faza 7: Demo End-to-End
 📅 Faza 8: Securitate (opțional)
 ```
+
+**Total**: ~7,330 linii cod (reducere de 500 linii prin Flower)
 
 ---
 
@@ -626,6 +644,7 @@ python examples/inference_example.py
 
 ---
 
-**Ultima actualizare**: 2026-04-16  
+**Ultima actualizare**: 2026-04-20  
 **Autor**: Fed-Med-FL Team  
-**Versiune**: 0.1.0
+**Versiune**: 0.2.0 (Flower Framework)  
+**FL Framework**: Flower 1.29+

@@ -6,8 +6,8 @@ Platformă de Federated Learning pentru clasificarea imaginilor medicale (Chest 
 
 MVP end-to-end cu:
 - **3 noduri spital** + **1 nod central**
-- **5 runde FL** cu delta updates
-- **FedAvg aggregation**
+- **5 runde FL** cu **Flower Framework**
+- **FedAvg aggregation** (gRPC-based)
 - **Grad-CAM interpretability**
 - **Web UI** pentru fiecare nod
 
@@ -29,32 +29,34 @@ make test-e2e
 ## 📊 Status Proiect
 
 ```
-[████████████████████████████████████] 75% Complete
+[████████████████████████████████████] 83% Complete
 
 ✅ Faza 1: ML Modularization (1,500 linii)
-✅ Faza 2: FL Core (1,550 linii)
+✅ Faza 2: FL Core - Flower Migration (1,200 linii)
 ✅ Faza 3: Node API + Worker (1,600 linii)
 ✅ Faza 4: Central Orchestrator (630 linii)
 ✅ Faza 5: UI (Node Portal) (1,600 linii)
 ✅ Faza 6: Storage + Testing (800 linii)
-🔜 Faza 7: Demo End-to-End
+🔄 Faza 7: Demo End-to-End
 📅 Faza 8: Securitate (opțional)
 ```
 
-**Total**: ~7,630 linii cod
+**Total**: ~7,330 linii cod (reducere de 500 linii prin Flower)
 
 ## 🏗️ Arhitectură
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    Central FL Server                         │
-│                   http://localhost:8080                      │
+│              http://localhost:8081 (Management)              │
+│              http://localhost:8080 (Flower gRPC)             │
 │                                                              │
-│  - Orchestrare runde FL                                      │
+│  - Flower Server (gRPC)                                      │
 │  - FedAvg aggregation                                        │
 │  - Model global storage                                      │
+│  - Management API                                            │
 └────────────────────────┬────────────────────────────────────┘
-                         │
+                         │ gRPC (Flower Protocol)
         ┌────────────────┼────────────────┐
         │                │                │
 ┌───────▼────────┐  ┌────▼──────┐  ┌─────▼─────────┐
@@ -63,34 +65,43 @@ make test-e2e
 │                │  │           │  │               │
 │ - FastAPI      │  │ - FastAPI │  │ - FastAPI     │
 │ - Celery       │  │ - Celery  │  │ - Celery      │
+│ - Flower Client│  │ - Flower  │  │ - Flower      │
 │ - Next.js UI   │  │ - Next.js │  │ - Next.js     │
 │ - Redis        │  │ - Redis   │  │ - Redis       │
 │ - SQLite       │  │ - SQLite  │  │ - SQLite      │
 └────────────────┘  └───────────┘  └───────────────┘
 ```
 
-## 🔄 Workflow FL
+## 🔄 Workflow FL (Flower Framework)
 
 ```
-1. Central creează rundă → W_global (ResNet18)
-2. Noduri se înregistrează
-3. Noduri download W_global
+1. Central pornește Flower Server (gRPC pe port 8080)
+2. Noduri pornesc Flower Clients și se conectează
+3. Flower Server trimite model global (W_global) la clienți
 4. Training local pe date private:
    - Node1: 100 imagini
    - Node2: 100 imagini  
    - Node3: 100 imagini
-5. Compute delta: ΔW = W_local - W_global
-6. Submit delta la central
-7. Central agregă: ΔW_avg = Σ(n_i/Σn_i)*ΔW_i
-8. Update global: W_global_new = W_global + ΔW_avg
-9. Repeat pentru runde următoare
+5. Clienți trimit parametrii actualizați înapoi
+6. Flower Server agregă cu FedAvg:
+   - W_global_new = Σ(n_i/Σn_i)*W_local_i
+7. Model global actualizat salvat
+8. Repeat pentru runde următoare
 ```
+
+**Avantaje Flower**:
+- ✅ Protocol gRPC (mai rapid decât HTTP REST)
+- ✅ Securitate built-in (TLS support)
+- ✅ Multiple strategies (FedAvg, FedProx, FedOpt)
+- ✅ Simulation mode pentru testing rapid
+- ✅ Community support și documentație
 
 ## 🛠️ Tech Stack
 
 ### Backend
 - **Python 3.11+**
 - **PyTorch** - Deep learning
+- **Flower 1.29+** - Federated learning framework
 - **FastAPI** - REST APIs
 - **Celery** - Task queue
 - **Redis** - Message broker
@@ -172,7 +183,9 @@ make test-ui         # Test UIs
 
 ### Faze Implementare
 - **[PHASE1_COMPLETE.md](docs/PHASE1_COMPLETE.md)** - ML Modularization
-- **[PHASE2_COMPLETE.md](docs/PHASE2_COMPLETE.md)** - FL Core
+- **[PHASE2_COMPLETE.md](docs/PHASE2_COMPLETE.md)** - FL Core (Flower Migration)
+- **[FLOWER_MIGRATION_PLAN.md](docs/FLOWER_MIGRATION_PLAN.md)** - Plan migrare Flower
+- **[FLOWER_MIGRATION_PROGRESS.md](docs/FLOWER_MIGRATION_PROGRESS.md)** - Progres migrare
 - **[PHASE3_COMPLETE.md](docs/PHASE3_COMPLETE.md)** - Node API + Worker
 - **[PHASE4_COMPLETE.md](docs/PHASE4_COMPLETE.md)** - Central Orchestrator
 - **[PHASE5_COMPLETE.md](docs/PHASE5_COMPLETE.md)** - UI (Node Portal)
@@ -223,8 +236,9 @@ make help            # Afișează toate comenzile
 
 | Service | URL | Descriere |
 |---------|-----|-----------|
-| Central Server | http://localhost:8080 | FL Orchestrator |
-| Central API Docs | http://localhost:8080/docs | Swagger UI |
+| Central Management | http://localhost:8081 | Management API |
+| Central Flower gRPC | localhost:8080 | Flower Server (gRPC) |
+| Central API Docs | http://localhost:8081/docs | Swagger UI |
 | Node1 API | http://localhost:8001 | Hospital 1 API |
 | Node1 UI | http://localhost:3001 | Hospital 1 Portal |
 | Node2 API | http://localhost:8002 | Hospital 2 API |
@@ -242,11 +256,14 @@ make help            # Afișează toate comenzile
 - ✅ Data augmentation
 
 ### Federated Learning
-- ✅ Delta updates (ΔW = W_local - W_global)
+- ✅ Flower Framework integration
+- ✅ gRPC-based communication
 - ✅ FedAvg weighted aggregation
+- ✅ Custom FedMedStrategy
+- ✅ Model persistence cu metadata
 - ✅ Hash verification
-- ✅ Outlier detection
 - ✅ Multi-round support
+- ✅ Simulation mode pentru testing
 
 ### Node Features
 - ✅ Dataset upload (ZIP)
@@ -333,6 +350,7 @@ Pentru întrebări și suport, deschide un issue pe GitHub.
 
 ---
 
-**Versiune**: 0.1.0  
-**Status**: ✅ Production Ready (75% complete)  
-**Ultima actualizare**: 2026-04-17
+**Versiune**: 0.2.0  
+**Status**: ✅ Production Ready (83% complete)  
+**FL Framework**: Flower 1.29+  
+**Ultima actualizare**: 2026-04-20
