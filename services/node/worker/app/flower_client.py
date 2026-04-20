@@ -321,7 +321,7 @@ def start_flower_client(
 def main():
     """Main entry point."""
     # Get configuration from environment
-    server_address = os.getenv("FLOWER_SERVER", "central:8080")
+    server_address = os.getenv("FLOWER_SERVER", "central:8082")
     node_id = os.getenv("NODE_ID", "node1")
     model_name = os.getenv("MODEL_NAME", "resnet18")
     num_classes = int(os.getenv("NUM_CLASSES", "2"))

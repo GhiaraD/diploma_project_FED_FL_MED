@@ -26,6 +26,9 @@ RUN pip install --no-cache-dir \
 # Copy API code
 COPY services/node/api/app /app/app
 
+# Copy Flower client for federated training tasks
+COPY services/node/worker/app/flower_client.py /app/app/flower_client.py
+
 # Create storage directories
 RUN mkdir -p /storage/datasets /storage/models/candidate /storage/models/deployed /storage/models/archived /storage/results/inference /storage/results/training /storage/deltas
 

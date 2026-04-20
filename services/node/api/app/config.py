@@ -35,7 +35,8 @@ class Settings:
     CELERY_RESULT_BACKEND: str = REDIS_URL
     
     # Central server
-    CENTRAL_URL: str = os.getenv("CENTRAL_URL", "http://central:8080")
+    CENTRAL_URL: str = os.getenv("CENTRAL_URL", "http://central:8081")
+    FLOWER_SERVER: str = os.getenv("FLOWER_SERVER", "central:8080")
     
     # API settings
     API_HOST: str = os.getenv("API_HOST", "0.0.0.0")

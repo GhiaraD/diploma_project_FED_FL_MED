@@ -11,7 +11,7 @@ services:
       PORT: 8081  # Management API port
       USE_FLOWER: "true"
       # Flower server config (if running in same container)
-      FLOWER_SERVER_ADDRESS: 0.0.0.0:8080
+      FLOWER_SERVER_ADDRESS: 0.0.0.0:8082
       NUM_ROUNDS: 5
       MIN_CLIENTS: 2
       MODEL_NAME: resnet18
@@ -19,7 +19,7 @@ services:
     volumes:
       - ./storage/central:/storage
     ports:
-      - "8080:8080"  # Flower gRPC
+      - "8082:8082"  # Flower gRPC
       - "8081:8081"  # Management API
     command: python -m app.main  # Start management API (Flower server started separately)
 
@@ -31,7 +31,7 @@ services:
     environment:
       NODE_ID: node1
       STORAGE_ROOT: /storage
-      CENTRAL_URL: http://central:8080
+      CENTRAL_URL: http://central:8081
       REDIS_URL: redis://node1-redis:6379/0
     volumes:
       - ./storage/node1:/storage

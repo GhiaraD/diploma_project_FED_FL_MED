@@ -15,7 +15,7 @@ from node_core import (
     train_model, get_optimizer, get_scheduler, EarlyStopping,
     predict_batch, GradCAM, get_final_conv_layer,
     save_gradcam_overlay, compute_metrics,
-    FederatedClient, compute_model_hash
+    compute_model_hash
 )
 
 from .config import settings
@@ -352,20 +352,23 @@ def federated_training_task(
         print(f"[{settings.NODE_ID}] Starting Flower client for round {round_id}...")
         print(f"[{settings.NODE_ID}] Dataset: {dataset_path} ({n_samples} samples)")
         
-        # Import Flower client
-        sys.path.insert(0, '/app/services/node/worker/app')
+        # Import and start Flower client directly
+        # Note: This runs in the worker container which has flower_client.py
+        sys.path.insert(0, '/app/worker')
         from flower_client import start_flower_client
         
         # Start Flower client (blocking call - will run until FL rounds complete)
         start_flower_client(
-            server_address=settings.CENTRAL_URL.replace("http://", "").replace("https://", ""),
+            server_address=settings.FLOWER_SERVER,
             node_id=settings.NODE_ID,
-            model_name="resnet18",  # TODO: Get from round config
+            model_name="resnet18",
             num_classes=2,
             dataset_path=dataset_path,
             device=settings.DEVICE,
-            batch_size=32,  # TODO: Get from round config
+            batch_size=32
         )
+        
+        print(f"[{settings.NODE_ID}] Flower client completed successfully")
         
         # After FL completes, save final model as candidate
         # Note: The actual model is saved by Flower client during training

@@ -674,7 +674,6 @@ def get_federated_history(db: Session = Depends(get_db)):
     
     Returns rounds sorted by most recent first, with active rounds at the top.
     """
-    from node_core import FederatedClient
     import requests
     
     # Get all FL training jobs from database
