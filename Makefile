@@ -47,7 +47,7 @@ logs-node3:
 
 # Build all services
 build:
-	docker compose build
+	docker compose build --no-cache central node1-api node2-api node3-api node1-worker node2-worker node3-worker
 
 # Build all services for GPU
 build-gpu:
