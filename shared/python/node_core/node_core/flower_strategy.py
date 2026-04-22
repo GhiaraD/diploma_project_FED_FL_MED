@@ -34,6 +34,9 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
         num_classes: int = 2,
         storage_path: str = "/storage",
         save_models: bool = True,
+        num_epochs: int = 2,
+        learning_rate: float = 0.001,
+        optimizer: str = "adam",
         **kwargs
     ):
         """
@@ -44,6 +47,9 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
             num_classes: Number of output classes
             storage_path: Path to storage directory
             save_models: Whether to save models after each round
+            num_epochs: Number of epochs per round
+            learning_rate: Learning rate for training
+            optimizer: Optimizer name
             **kwargs: Additional arguments for FedAvg
         """
         super().__init__(**kwargs)
@@ -52,6 +58,9 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
         self.num_classes = num_classes
         self.storage_path = Path(storage_path)
         self.save_models = save_models
+        self.num_epochs = num_epochs
+        self.learning_rate = learning_rate
+        self.optimizer = optimizer
         
         # Create storage directories
         self.models_dir = self.storage_path / "models"
@@ -67,6 +76,42 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
         print(f"[FedMedStrategy] Initialized with {model_name}")
         print(f"[FedMedStrategy] Storage: {self.storage_path}")
         print(f"[FedMedStrategy] Save models: {save_models}")
+        print(f"[FedMedStrategy] Training config: {num_epochs} epochs, lr={learning_rate}, optimizer={optimizer}")
+    
+    def configure_fit(
+        self, 
+        server_round: int, 
+        parameters, 
+        client_manager
+    ):
+        """
+        Configure the next round of training.
+        
+        Uses default FedAvg client selection but adds training hyperparameters.
+        """
+        # Call parent to get default client selection
+        config_list = super().configure_fit(server_round, parameters, client_manager)
+        
+        # Add hyperparameters to config
+        if config_list:
+            updated_config_list = []
+            for client, fit_ins in config_list:
+                # Merge existing config with hyperparameters
+                new_config = {
+                    **fit_ins.config,
+                    "num_epochs": self.num_epochs,
+                    "learning_rate": self.learning_rate,
+                    "optimizer": self.optimizer,
+                }
+                new_fit_ins = fl.common.FitIns(fit_ins.parameters, new_config)
+                updated_config_list.append((client, new_fit_ins))
+            
+            print(f"[FedMedStrategy] Round {server_round}: Configured {len(updated_config_list)} clients")
+            print(f"[FedMedStrategy]   Hyperparameters: {self.num_epochs} epochs, lr={self.learning_rate}")
+            
+            return updated_config_list
+        
+        return config_list
     
     def initialize_parameters(self, client_manager):
         """
@@ -253,8 +298,13 @@ def create_fedmed_strategy(
     num_classes: int = 2,
     storage_path: str = "/storage",
     min_clients: int = 2,
+    min_fit_clients: int = 1,  # Train 1 client at a time by default
+    min_available_clients: int = 3,  # Wait for all clients to be available
     fraction_fit: float = 1.0,
     fraction_evaluate: float = 1.0,
+    num_epochs: int = 5,
+    learning_rate: float = 0.001,
+    optimizer: str = "adam",
     **kwargs
 ) -> FedMedStrategy:
     """
@@ -265,8 +315,13 @@ def create_fedmed_strategy(
         num_classes: Number of classes
         storage_path: Storage directory
         min_clients: Minimum number of clients
+        min_fit_clients: Minimum clients to train per round (1 = sequential)
+        min_available_clients: Minimum clients that must be available
         fraction_fit: Fraction of clients for training
         fraction_evaluate: Fraction of clients for evaluation
+        num_epochs: Number of epochs per round
+        learning_rate: Learning rate for training
+        optimizer: Optimizer name
         **kwargs: Additional strategy arguments
     
     Returns:
@@ -276,11 +331,14 @@ def create_fedmed_strategy(
         model_name=model_name,
         num_classes=num_classes,
         storage_path=storage_path,
+        num_epochs=num_epochs,
+        learning_rate=learning_rate,
+        optimizer=optimizer,
         fraction_fit=fraction_fit,
         fraction_evaluate=fraction_evaluate,
-        min_fit_clients=min_clients,
+        min_fit_clients=min_fit_clients,
         min_evaluate_clients=min_clients,
-        min_available_clients=min_clients,
+        min_available_clients=min_available_clients,
         **kwargs
     )
     

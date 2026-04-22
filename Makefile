@@ -55,13 +55,13 @@ build-gpu:
 
 # Build specific services
 build-central:
-	docker compose build central
+	docker compose build --no-cache central
 
 build-nodes:
-	docker compose build node1-api node1-worker node2-api node2-worker node3-api node3-worker
+	docker compose build --no-cache node1-api node1-worker node2-api node2-worker node3-api node3-worker
 
 build-ui:
-	docker compose build node1-ui node2-ui node3-ui
+	docker compose build --no-cache node1-ui node2-ui node3-ui
 
 # Restart services
 restart:

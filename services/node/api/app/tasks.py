@@ -357,11 +357,14 @@ def federated_training_task(
         sys.path.insert(0, '/app/worker')
         from flower_client import start_flower_client
         
+        # Get model name from environment or default to efficientnet_b0
+        model_name = os.getenv("MODEL_NAME", "efficientnet_b0")
+        
         # Start Flower client (blocking call - will run until FL rounds complete)
         start_flower_client(
             server_address=settings.FLOWER_SERVER,
             node_id=settings.NODE_ID,
-            model_name="resnet18",
+            model_name=model_name,
             num_classes=2,
             dataset_path=dataset_path,
             device=settings.DEVICE,

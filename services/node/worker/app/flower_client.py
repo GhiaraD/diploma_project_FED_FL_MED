@@ -250,7 +250,16 @@ class FedMedClient(fl.client.NumPyClient):
         avg_loss = total_loss / len(self.val_loader.dataset)
         num_samples = len(self.val_loader.dataset)
         
-        metrics = compute_metrics(y_true, y_pred, y_probs)
+        metrics_full = compute_metrics(y_true, y_pred, y_probs)
+        
+        # Filter only scalar metrics for Flower (no lists/arrays)
+        metrics = {
+            'accuracy': float(metrics_full.get('accuracy', 0)),
+            'f1': float(metrics_full.get('f1', 0)),
+            'precision': float(metrics_full.get('precision', 0)),
+            'recall': float(metrics_full.get('recall', 0)),
+            'auc': float(metrics_full.get('auc', 0)),
+        }
         
         print(f"[{self.node_id}] Evaluation results:")
         print(f"  - Loss: {avg_loss:.4f}")
