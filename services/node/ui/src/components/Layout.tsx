@@ -19,6 +19,7 @@ import {
   School as SchoolIcon,
   Hub as HubIcon,
   Storage as StorageIcon,
+  Work as WorkIcon,
 } from '@mui/icons-material';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -32,6 +33,7 @@ const menuItems = [
   { text: 'Train', icon: <SchoolIcon />, href: '/train' },
   { text: 'Federated', icon: <HubIcon />, href: '/federated' },
   { text: 'Models', icon: <StorageIcon />, href: '/models' },
+  { text: 'Jobs', icon: <WorkIcon />, href: '/jobs' },
 ];
 
 interface LayoutProps {

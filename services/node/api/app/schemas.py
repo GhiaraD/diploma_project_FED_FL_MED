@@ -35,6 +35,7 @@ class ModelInfo(BaseModel):
     model_name: str
     version: str
     type: str
+    labels: Optional[List[str]] = []
     round_id: Optional[str]
     metrics: Optional[Dict[str, Any]]  # Changed from Dict[str, float] to support lists like confusion_matrix
     created_at: str

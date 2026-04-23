@@ -7,6 +7,13 @@ from sqlalchemy.orm import sessionmaker
 from datetime import datetime
 from .config import settings
 
+def get_local_now():
+    """
+    Get current datetime in local system timezone.
+    Automatically detects the timezone from the system.
+    """
+    return datetime.now().astimezone()
+
 # Create engine
 engine = create_engine(
     settings.DATABASE_URL,
@@ -28,12 +35,13 @@ class Model(Base):
     model_id = Column(String, unique=True, index=True)  # e.g., "resnet18_R-1_candidate"
     model_name = Column(String, index=True)  # e.g., "resnet18"
     version = Column(String)  # e.g., "R-1"
-    type = Column(String, index=True)  # "candidate", "deployed", "archived"
+    type = Column(String, index=True)  # "candidate", "deployed", "archived" (kept for backward compatibility)
+    labels = Column(JSON, nullable=True)  # ["global", "active", "candidate"] - can have 1-2 labels
     round_id = Column(String, nullable=True, index=True)  # FL round ID
     base_model_hash = Column(String, nullable=True)  # Hash of base model for FL
     file_path = Column(String)  # Path to .pt file
     metrics = Column(JSON, nullable=True)  # Training/validation metrics
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=get_local_now)
     promoted_at = Column(DateTime, nullable=True)
     archived_at = Column(DateTime, nullable=True)
 
@@ -49,7 +57,7 @@ class Job(Base):
     params = Column(JSON)  # Job parameters
     result = Column(JSON, nullable=True)  # Job result
     error = Column(Text, nullable=True)  # Error message if failed
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=get_local_now)
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
 
@@ -66,7 +74,7 @@ class Dataset(Base):
     num_samples = Column(Integer)
     num_normal = Column(Integer, nullable=True)
     num_pneumonia = Column(Integer, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=get_local_now)
 
 
 class InferenceResult(Base):
@@ -82,7 +90,7 @@ class InferenceResult(Base):
     confidence = Column(Float)
     probabilities = Column(JSON)  # [prob_normal, prob_pneumonia]
     gradcam_path = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=get_local_now)
 
 
 # Create all tables

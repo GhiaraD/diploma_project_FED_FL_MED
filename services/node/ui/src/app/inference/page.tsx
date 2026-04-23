@@ -21,6 +21,13 @@ import {
   Divider,
   Slider,
   IconButton,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  TablePagination,
 } from '@mui/material';
 import { 
   Psychology as PsychologyIcon, 
@@ -29,6 +36,7 @@ import {
   Refresh as RefreshIcon,
   NavigateBefore as NavigateBeforeIcon,
   NavigateNext as NavigateNextIcon,
+  Visibility as VisibilityIcon,
 } from '@mui/icons-material';
 import Layout from '@/components/Layout';
 
@@ -44,6 +52,13 @@ export default function InferencePage() {
   const [error, setError] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const [results, setResults] = useState<any[]>([]);
+  
+  // History state
+  const [inferenceHistory, setInferenceHistory] = useState<any[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [historyPage, setHistoryPage] = useState(0);
+  const [historyRowsPerPage, setHistoryRowsPerPage] = useState(10);
+  const [historySearchDate, setHistorySearchDate] = useState('');
   
   // Viewer state
   const [selectedResultIndex, setSelectedResultIndex] = useState<number>(0);
@@ -75,10 +90,51 @@ export default function InferencePage() {
     }
   };
 
-  // Load initial directory
+  // Load initial directory and history
   useEffect(() => {
     browseDirectory(currentDir);
+    loadInferenceHistory();
   }, []);
+
+  // Load inference history
+  const loadInferenceHistory = async () => {
+    try {
+      setLoadingHistory(true);
+      const response = await fetch(`${apiBase}/api/jobs/list?job_type=infer&limit=100`);
+      
+      if (!response.ok) throw new Error('Failed to load history');
+      
+      const data = await response.json();
+      setInferenceHistory(data.jobs || []);
+    } catch (err) {
+      console.error('Failed to load inference history:', err);
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+  // Load results from history
+  const loadHistoryResults = async (historyJobId: string) => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      const response = await fetch(`${apiBase}/api/infer/results/${historyJobId}`);
+      const data = await response.json();
+      
+      if (data.status === 'completed') {
+        setResults(data.results || []);
+        setSelectedResultIndex(0);
+        setJobId(historyJobId);
+      } else {
+        setError(`Job status: ${data.status}`);
+      }
+    } catch (err) {
+      setError('Failed to load results');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // Toggle file selection
   const toggleFileSelection = (path: string) => {
@@ -122,6 +178,9 @@ export default function InferencePage() {
       // Poll for results
       pollResults(data.job_id);
       
+      // Reload history to show new job
+      loadInferenceHistory();
+      
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Inference failed');
       setLoading(false);
@@ -143,8 +202,9 @@ export default function InferencePage() {
         if (data.status === 'completed') {
           clearInterval(poll);
           setResults(data.results || []);
-          setSelectedResultIndex(0); // Select first result
+          setSelectedResultIndex(0);
           setLoading(false);
+          loadInferenceHistory(); // Refresh history
         } else if (data.status === 'failed') {
           clearInterval(poll);
           setError('Inference job failed');
@@ -162,9 +222,50 @@ export default function InferencePage() {
     }, 5000); // Poll every 5 seconds
   };
 
+  // Filter history by date
+  const filteredHistory = inferenceHistory.filter(job => {
+    if (!historySearchDate) return true;
+    const jobDate = new Date(job.created_at).toLocaleDateString();
+    return jobDate.includes(historySearchDate);
+  });
+
+  // Paginated history
+  const paginatedHistory = filteredHistory.slice(
+    historyPage * historyRowsPerPage,
+    historyPage * historyRowsPerPage + historyRowsPerPage
+  );
+
+  // Handle page change
+  const handleChangePage = (event: unknown, newPage: number) => {
+    setHistoryPage(newPage);
+  };
+
+  // Handle rows per page change
+  const handleChangeRowsPerPage = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setHistoryRowsPerPage(parseInt(event.target.value, 10));
+    setHistoryPage(0);
+  };
+
+  // Format date
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleString();
+  };
+
+  // Get status color
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'completed': return 'success';
+      case 'running': return 'primary';
+      case 'failed': return 'error';
+      case 'pending': return 'warning';
+      default: return 'default';
+    }
+  };
+
   return (
     <Layout title="Inference">
-      <Container maxWidth="lg">
+      <Container maxWidth="xl">
         <Typography variant="h4" gutterBottom>
           Inference & Grad-CAM
         </Typography>
@@ -175,13 +276,14 @@ export default function InferencePage() {
           </Alert>
         )}
 
-        <Grid container spacing={3}>
-          {/* File Browser */}
-          <Grid item={true} xs={12} md={results.length > 0 ? 6 : 8}>
-            <Paper sx={{ p: 3 }}>
+        {/* Top Section: Browse Images + Results Viewer */}
+        <Grid container spacing={3} sx={{ mb: 3 }}>
+          {/* Browse Images */}
+          <Grid item xs={12} md={6}>
+            <Paper sx={{ p: 3, height: '100%' }}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                 <Typography variant="h6">
-                  Browse Hospital Images
+                  Browse Images
                 </Typography>
                 <Button
                   size="small"
@@ -239,10 +341,10 @@ export default function InferencePage() {
                   </Typography>
                   {files.length === 0 ? (
                     <Typography variant="body2" color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>
-                      No images found in this directory
+                      No images found
                     </Typography>
                   ) : (
-                    <List dense sx={{ maxHeight: 400, overflow: 'auto' }}>
+                    <List dense sx={{ maxHeight: 300, overflow: 'auto' }}>
                       {files.map((file) => (
                         <ListItem key={file.path} disablePadding>
                           <ListItemButton onClick={() => toggleFileSelection(file.path)}>
@@ -284,11 +386,11 @@ export default function InferencePage() {
           </Grid>
 
           {/* Results Viewer */}
-          {results.length > 0 ? (
-            <Grid item={true} xs={12} md={6}>
-              <Paper sx={{ p: 3 }}>
+          <Grid item xs={12} md={6}>
+            {results.length > 0 ? (
+              <Paper sx={{ p: 3, height: '100%' }}>
                 <Typography variant="h6" gutterBottom>
-                  Inference Results
+                  Results
                 </Typography>
 
                 {/* Result Navigation */}
@@ -314,179 +416,258 @@ export default function InferencePage() {
 
                 {/* Current Result */}
                 {results[selectedResultIndex] && (
-                  <>
-                    {/* Prediction Info */}
-                    <Card sx={{ mb: 2 }}>
-                      <CardContent>
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                          <Typography variant="subtitle2" color="text.secondary">
-                            Prediction
+                  <Grid container spacing={2}>
+                    {/* Left Column: Prediction & Probabilities */}
+                    <Grid item xs={12} md={6}>
+                      {/* Prediction Info */}
+                      <Card sx={{ mb: 2 }}>
+                        <CardContent>
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                            <Typography variant="subtitle2" color="text.secondary">
+                              Prediction
+                            </Typography>
+                            <Chip
+                              label={results[selectedResultIndex].predicted_class === 0 ? 'NORMAL' : 'PNEUMONIA'}
+                              color={results[selectedResultIndex].predicted_class === 0 ? 'success' : 'error'}
+                              size="small"
+                            />
+                          </Box>
+                          <Typography variant="h4" gutterBottom>
+                            {(results[selectedResultIndex].confidence * 100).toFixed(1)}%
                           </Typography>
-                          <Chip
-                            label={results[selectedResultIndex].predicted_class === 0 ? 'NORMAL' : 'PNEUMONIA'}
-                            color={results[selectedResultIndex].predicted_class === 0 ? 'success' : 'error'}
-                            size="small"
-                          />
-                        </Box>
-                        <Typography variant="h4" gutterBottom>
-                          {(results[selectedResultIndex].confidence * 100).toFixed(1)}%
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', wordBreak: 'break-all' }}>
-                          {results[selectedResultIndex].image_path.split('/').pop()}
-                        </Typography>
-                      </CardContent>
-                    </Card>
+                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', wordBreak: 'break-all' }}>
+                            {results[selectedResultIndex].image_path.split('/').pop()}
+                          </Typography>
+                        </CardContent>
+                      </Card>
 
-                    {/* Image Viewer with Grad-CAM Overlay */}
-                    <Box sx={{ 
-                      position: 'relative', 
-                      width: '100%',
-                      maxWidth: 400,
-                      mx: 'auto',
-                      mb: 2 
-                    }}>
-                      {/* Original Image */}
-                      <Box
-                        component="img"
-                        src={`${apiBase}/api/infer/image?path=${encodeURIComponent(results[selectedResultIndex].image_path)}`}
-                        alt="Original"
-                        sx={{
-                          width: '100%',
-                          height: 'auto',
-                          display: 'block',
-                          borderRadius: 1,
-                          border: '1px solid',
-                          borderColor: 'divider',
-                        }}
-                      />
-                      
-                      {/* Grad-CAM Overlay */}
-                      {results[selectedResultIndex].gradcam_path && (
+                      {/* Probabilities */}
+                      <Card>
+                        <CardContent>
+                          <Typography variant="subtitle2" gutterBottom>
+                            Class Probabilities
+                          </Typography>
+                          <Box sx={{ mt: 1 }}>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                              <Typography variant="body2">NORMAL</Typography>
+                              <Typography variant="body2" fontWeight="bold">
+                                {(results[selectedResultIndex].probabilities[0] * 100).toFixed(2)}%
+                              </Typography>
+                            </Box>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                              <Typography variant="body2">PNEUMONIA</Typography>
+                              <Typography variant="body2" fontWeight="bold">
+                                {(results[selectedResultIndex].probabilities[1] * 100).toFixed(2)}%
+                              </Typography>
+                            </Box>
+                          </Box>
+                        </CardContent>
+                      </Card>
+                    </Grid>
+
+                    {/* Right Column: Image & Opacity */}
+                    <Grid item xs={12} md={6}>
+                      {/* Image Viewer with Grad-CAM Overlay */}
+                      <Box sx={{ 
+                        position: 'relative', 
+                        width: '100%',
+                        maxWidth: 400,
+                        mx: 'auto',
+                        mb: 2 
+                      }}>
+                        {/* Original Image */}
                         <Box
                           component="img"
-                          src={`${apiBase}/api/infer/image?path=${encodeURIComponent(results[selectedResultIndex].gradcam_path)}`}
-                          alt="Grad-CAM"
+                          src={`${apiBase}/api/infer/image?path=${encodeURIComponent(results[selectedResultIndex].image_path)}`}
+                          alt="Original"
                           sx={{
-                            position: 'absolute',
-                            top: 0,
-                            left: 0,
                             width: '100%',
-                            height: '100%',
-                            opacity: gradcamOpacity,
+                            height: 'auto',
+                            display: 'block',
                             borderRadius: 1,
-                            pointerEvents: 'none',
-                            transition: 'opacity 0.05s linear',
+                            border: '1px solid',
+                            borderColor: 'divider',
                           }}
                         />
-                      )}
-                    </Box>
-
-                    {/* Opacity Slider */}
-                    {results[selectedResultIndex].gradcam_path && (
-                      <Box sx={{ px: 2, maxWidth: 400, mx: 'auto' }}>
-                        <Typography variant="body2" color="text.secondary" gutterBottom>
-                          Grad-CAM Opacity: {(gradcamOpacity * 100).toFixed(0)}%
-                        </Typography>
-                        <Slider
-                          value={gradcamOpacity}
-                          onChange={(_, value) => setGradcamOpacity(value as number)}
-                          min={0}
-                          max={1}
-                          step={0.01}
-                          marks={[
-                            { value: 0, label: '0%' },
-                            { value: 0.4, label: '40%' },
-                            { value: 1, label: '100%' },
-                          ]}
-                          valueLabelDisplay="auto"
-                          valueLabelFormat={(value) => `${(value * 100).toFixed(0)}%`}
-                        />
+                        
+                        {/* Grad-CAM Overlay */}
+                        {results[selectedResultIndex].gradcam_path && (
+                          <Box
+                            component="img"
+                            src={`${apiBase}/api/infer/image?path=${encodeURIComponent(results[selectedResultIndex].gradcam_path)}`}
+                            alt="Grad-CAM"
+                            sx={{
+                              position: 'absolute',
+                              top: 0,
+                              left: 0,
+                              width: '100%',
+                              height: '100%',
+                              opacity: gradcamOpacity,
+                              borderRadius: 1,
+                              pointerEvents: 'none',
+                              transition: 'opacity 0.05s linear',
+                            }}
+                          />
+                        )}
                       </Box>
-                    )}
 
-                    {/* Probabilities */}
-                    <Card sx={{ mt: 2 }}>
-                      <CardContent>
-                        <Typography variant="subtitle2" gutterBottom>
-                          Class Probabilities
-                        </Typography>
-                        <Box sx={{ mt: 1 }}>
-                          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                            <Typography variant="body2">NORMAL</Typography>
-                            <Typography variant="body2" fontWeight="bold">
-                              {(results[selectedResultIndex].probabilities[0] * 100).toFixed(2)}%
-                            </Typography>
-                          </Box>
-                          <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                            <Typography variant="body2">PNEUMONIA</Typography>
-                            <Typography variant="body2" fontWeight="bold">
-                              {(results[selectedResultIndex].probabilities[1] * 100).toFixed(2)}%
-                            </Typography>
-                          </Box>
+                      {/* Opacity Slider */}
+                      {results[selectedResultIndex].gradcam_path && (
+                        <Box sx={{ px: 2, maxWidth: 400, mx: 'auto' }}>
+                          <Typography variant="body2" color="text.secondary" gutterBottom>
+                            Grad-CAM Opacity: {(gradcamOpacity * 100).toFixed(0)}%
+                          </Typography>
+                          <Slider
+                            value={gradcamOpacity}
+                            onChange={(_, value) => setGradcamOpacity(value as number)}
+                            min={0}
+                            max={1}
+                            step={0.01}
+                            marks={[
+                              { value: 0, label: '0%' },
+                              { value: 0.4, label: '40%' },
+                              { value: 1, label: '100%' },
+                            ]}
+                            valueLabelDisplay="auto"
+                            valueLabelFormat={(value) => `${(value * 100).toFixed(0)}%`}
+                          />
                         </Box>
-                      </CardContent>
-                    </Card>
-                  </>
+                      )}
+                    </Grid>
+                  </Grid>
                 )}
               </Paper>
-            </Grid>
-          ) : (
-            /* Info Panel (shown when no results) */
-            <Grid item={true} xs={12} md={6}>
-              <Card>
-                <CardContent>
-                  <Typography variant="h6" gutterBottom>
-                    On-Premise Inference
+            ) : (
+              <Paper sx={{ p: 3, height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Box sx={{ textAlign: 'center' }}>
+                  <Typography variant="h6" color="text.secondary" gutterBottom>
+                    No Results Yet
                   </Typography>
-                  <Typography variant="body2" paragraph>
-                    This interface allows you to run inference on images that are already stored in the hospital's filesystem.
+                  <Typography variant="body2" color="text.secondary">
+                    Select images and run inference, or view results from history below
                   </Typography>
-                  <Typography variant="body2" component="div">
-                    • Images remain in their original location
-                  </Typography>
-                  <Typography variant="body2" component="div">
-                    • No data leaves the hospital premises
-                  </Typography>
-                  <Typography variant="body2" component="div">
-                    • Uses deployed model from registry
-                  </Typography>
-                  <Typography variant="body2" component="div">
-                    • Generates Grad-CAM visualizations
-                  </Typography>
-                </CardContent>
-              </Card>
-
-              <Card sx={{ mt: 2 }}>
-                <CardContent>
-                  <Typography variant="h6" gutterBottom>
-                    Grad-CAM
-                  </Typography>
-                  <Typography variant="body2">
-                    Gradient-weighted Class Activation Mapping provides visual explanations
-                    by highlighting the regions that were most important for the prediction.
-                  </Typography>
-                </CardContent>
-              </Card>
-
-              <Card sx={{ mt: 2 }}>
-                <CardContent>
-                  <Typography variant="h6" gutterBottom>
-                    Available Directories
-                  </Typography>
-                  <Typography variant="body2" component="div">
-                    • /storage/datasets
-                  </Typography>
-                  <Typography variant="body2" component="div">
-                    • /hospital_data
-                  </Typography>
-                  <Typography variant="body2" component="div">
-                    • /mnt/radiology
-                  </Typography>
-                </CardContent>
-              </Card>
-            </Grid>
-          )}
+                </Box>
+              </Paper>
+            )}
+          </Grid>
         </Grid>
+
+        {/* Bottom Section: Inference History Table */}
+        <Paper sx={{ p: 3 }}>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+            <Typography variant="h6">
+              Inference History
+            </Typography>
+            <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+              <TextField
+                size="small"
+                label="Search by date"
+                placeholder="MM/DD/YYYY"
+                value={historySearchDate}
+                onChange={(e) => {
+                  setHistorySearchDate(e.target.value);
+                  setHistoryPage(0);
+                }}
+                sx={{ width: 200 }}
+              />
+              <Button
+                size="small"
+                startIcon={<RefreshIcon />}
+                onClick={loadInferenceHistory}
+                disabled={loadingHistory}
+              >
+                Refresh
+              </Button>
+            </Box>
+          </Box>
+
+          {loadingHistory ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
+              <CircularProgress />
+            </Box>
+          ) : filteredHistory.length === 0 ? (
+            <Box sx={{ textAlign: 'center', p: 3 }}>
+              <Typography variant="body2" color="text.secondary">
+                {historySearchDate ? 'No inference jobs found for this date' : 'No inference history yet'}
+              </Typography>
+            </Box>
+          ) : (
+            <>
+              <TableContainer>
+                <Table>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Job ID</TableCell>
+                      <TableCell>Status</TableCell>
+                      <TableCell>Created At</TableCell>
+                      <TableCell>Images</TableCell>
+                      <TableCell>Duration</TableCell>
+                      <TableCell align="right">Actions</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {paginatedHistory.map((job) => (
+                      <TableRow 
+                        key={job.job_id}
+                        hover
+                        sx={{ 
+                          bgcolor: jobId === job.job_id ? 'action.selected' : 'transparent',
+                        }}
+                      >
+                        <TableCell>
+                          <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.875rem' }}>
+                            {job.job_id}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Chip
+                            label={job.status}
+                            color={getStatusColor(job.status)}
+                            size="small"
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2">
+                            {formatDate(job.created_at)}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2">
+                            {job.result?.num_images || '-'}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2">
+                            {job.duration ? `${job.duration.toFixed(2)}s` : '-'}
+                          </Typography>
+                        </TableCell>
+                        <TableCell align="right">
+                          <IconButton
+                            size="small"
+                            onClick={() => loadHistoryResults(job.job_id)}
+                            disabled={job.status !== 'completed'}
+                            color="primary"
+                          >
+                            <VisibilityIcon />
+                          </IconButton>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+              <TablePagination
+                rowsPerPageOptions={[5, 10, 25, 50]}
+                component="div"
+                count={filteredHistory.length}
+                rowsPerPage={historyRowsPerPage}
+                page={historyPage}
+                onPageChange={handleChangePage}
+                onRowsPerPageChange={handleChangeRowsPerPage}
+              />
+            </>
+          )}
+        </Paper>
       </Container>
     </Layout>
   );

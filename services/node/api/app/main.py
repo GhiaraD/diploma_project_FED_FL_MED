@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, BackgroundTasks
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -7,6 +7,8 @@ from datetime import datetime
 import os
 import uuid
 import shutil
+import asyncio
+import json
 
 from .config import settings
 from .database import get_db, Model, Job, Dataset, InferenceResult
@@ -180,12 +182,75 @@ def list_datasets(db: Session = Depends(get_db)):
 # Model Registry Endpoints
 # ============================================================================
 
+def compute_model_labels(models_list, db: Session):
+    """
+    Compute labels for models based on accuracy and deployed status.
+    
+    Labels:
+    - "active": deployed model (used for inference)
+    - "global": best model (highest accuracy)
+    - "candidate": neither active nor global (or both)
+    
+    A model can have 1-2 labels (e.g., both "global" and "active" if best model is deployed)
+    Note: No "archived" label - old deployed models return to "candidate" status
+    """
+    # Find deployed model
+    deployed_model_id = None
+    for m in models_list:
+        if m.type == "deployed":
+            deployed_model_id = m.model_id
+            break
+    
+    # Find best model (highest accuracy) - include all models
+    best_model_id = None
+    best_accuracy = -1
+    for m in models_list:
+        if m.metrics and "accuracy" in m.metrics:
+            acc = m.metrics["accuracy"]
+            if acc > best_accuracy:
+                best_accuracy = acc
+                best_model_id = m.model_id
+    
+    # Assign labels
+    for m in models_list:
+        labels = []
+        
+        # Check if active (deployed)
+        if m.model_id == deployed_model_id:
+            labels.append("active")
+        
+        # Check if global (best)
+        if m.model_id == best_model_id:
+            labels.append("global")
+        
+        # If no labels, it's a candidate
+        if not labels:
+            labels.append("candidate")
+        
+        # Update database if labels changed
+        if m.labels != labels:
+            m.labels = labels
+        
+        # Update type to match labels (for backward compatibility)
+        # If model has "active" label, type should be "deployed"
+        # Otherwise, type should be "candidate"
+        if "active" in labels:
+            if m.type != "deployed":
+                m.type = "deployed"
+        else:
+            if m.type != "candidate":
+                m.type = "candidate"
+    
+    db.commit()
+    return models_list
+
+
 @app.get("/api/models/registry", response_model=ModelListResponse)
 def list_models(
     type: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    """List models in registry."""
+    """List models in registry with computed labels."""
     query = db.query(Model)
     
     if type:
@@ -193,13 +258,17 @@ def list_models(
     
     models = query.order_by(Model.created_at.desc()).all()
     
+    # Compute labels for all models
+    models = compute_model_labels(models, db)
+    
     return {
         "models": [
             {
                 "model_id": m.model_id,
                 "model_name": m.model_name,
                 "version": m.version,
-                "type": m.type,
+                "type": m.type,  # Keep for backward compatibility
+                "labels": m.labels or [],
                 "round_id": m.round_id,
                 "metrics": m.metrics,
                 "created_at": m.created_at.isoformat()
@@ -215,72 +284,83 @@ def promote_model(
     db: Session = Depends(get_db)
 ):
     """
-    Promote candidate model to deployed.
+    Promote model to deployed (active).
     
-    - Archives current deployed model
-    - Promotes candidate to deployed
+    - Changes current deployed model back to candidate
+    - Promotes selected model to deployed
+    - Recalculates labels for all models
     """
-    # Get candidate model
-    candidate = db.query(Model).filter(
-        Model.model_id == request.model_id,
-        Model.type == "candidate"
+    # Get model to promote
+    model_to_promote = db.query(Model).filter(
+        Model.model_id == request.model_id
     ).first()
     
-    if not candidate:
-        raise HTTPException(status_code=404, detail="Candidate model not found")
+    if not model_to_promote:
+        raise HTTPException(status_code=404, detail="Model not found")
     
-    # Archive current deployed model
+    # Change current deployed model back to candidate
     current_deployed = db.query(Model).filter(
         Model.type == "deployed",
-        Model.model_name == candidate.model_name
+        Model.model_name == model_to_promote.model_name
     ).first()
     
     if current_deployed:
-        current_deployed.type = "archived"
-        current_deployed.archived_at = datetime.utcnow()
+        current_deployed.type = "candidate"
         
-        # Move file to archived directory
+        # Move file back to candidate directory
         old_path = current_deployed.file_path
-        new_path = old_path.replace("/candidate/", "/archived/")
+        new_path = old_path.replace("/deployed/", "/candidate/")
         if os.path.exists(old_path):
             os.makedirs(os.path.dirname(new_path), exist_ok=True)
             shutil.move(old_path, new_path)
             current_deployed.file_path = new_path
     
-    # Promote candidate
-    candidate.type = "deployed"
-    candidate.promoted_at = datetime.utcnow()
+    # Promote selected model
+    model_to_promote.type = "deployed"
+    model_to_promote.promoted_at = datetime.utcnow()
     
     # Move file to deployed directory
-    old_path = candidate.file_path
+    old_path = model_to_promote.file_path
     new_path = old_path.replace("/candidate/", "/deployed/")
     if os.path.exists(old_path):
         os.makedirs(os.path.dirname(new_path), exist_ok=True)
         shutil.move(old_path, new_path)
-        candidate.file_path = new_path
+        model_to_promote.file_path = new_path
     
     db.commit()
     
+    # Recalculate labels for all models
+    all_models = db.query(Model).all()
+    compute_model_labels(all_models, db)
+    
     return {
         "status": "success",
-        "model_id": candidate.model_id,
-        "message": f"Model {candidate.model_id} promoted to deployed"
+        "model_id": model_to_promote.model_id,
+        "message": f"Model {model_to_promote.model_id} promoted to active"
     }
 
 
 @app.get("/api/models/{model_id}")
 def get_model_info(model_id: str, db: Session = Depends(get_db)):
-    """Get model information."""
+    """Get model information with computed labels."""
     model = db.query(Model).filter(Model.model_id == model_id).first()
     
     if not model:
         raise HTTPException(status_code=404, detail="Model not found")
+    
+    # Compute labels for this model
+    all_models = db.query(Model).all()
+    compute_model_labels(all_models, db)
+    
+    # Refresh model to get updated labels
+    db.refresh(model)
     
     return {
         "model_id": model.model_id,
         "model_name": model.model_name,
         "version": model.version,
         "type": model.type,
+        "labels": model.labels or [],
         "round_id": model.round_id,
         "base_model_hash": model.base_model_hash,
         "file_path": model.file_path,
@@ -740,6 +820,266 @@ def get_federated_history(db: Session = Depends(get_db)):
         "total_rounds": len(rounds_history),
         "rounds": rounds_history
     }
+
+
+# ============================================================================
+# Observability & Management Endpoints
+# ============================================================================
+
+@app.get("/api/jobs/list")
+def list_jobs(
+    status: Optional[str] = None,
+    job_type: Optional[str] = None,
+    limit: int = 50,
+    db: Session = Depends(get_db)
+):
+    """
+    List all jobs with filtering and pagination.
+    
+    Args:
+        status: Filter by status (pending, running, completed, failed)
+        job_type: Filter by type (train, infer, federated_train)
+        limit: Maximum number of jobs to return
+    
+    Returns:
+        List of jobs with details
+    """
+    query = db.query(Job)
+    
+    if status:
+        query = query.filter(Job.status == status)
+    
+    if job_type:
+        query = query.filter(Job.job_type == job_type)
+    
+    jobs = query.order_by(Job.created_at.desc()).limit(limit).all()
+    
+    return {
+        "total": len(jobs),
+        "jobs": [
+            {
+                "job_id": j.job_id,
+                "job_type": j.job_type,
+                "status": j.status,
+                "params": j.params,
+                "result": j.result,
+                "error": j.error,
+                "created_at": j.created_at.isoformat(),
+                "started_at": j.started_at.isoformat() if j.started_at else None,
+                "completed_at": j.completed_at.isoformat() if j.completed_at else None,
+                "duration": (j.completed_at - j.started_at).total_seconds() if j.completed_at and j.started_at else None
+            }
+            for j in jobs
+        ]
+    }
+
+
+@app.get("/api/jobs/{job_id}/status")
+def get_job_status(job_id: str, db: Session = Depends(get_db)):
+    """
+    Get detailed status of a specific job.
+    
+    Returns:
+        Detailed job information including Celery task status
+    """
+    job = db.query(Job).filter(Job.job_id == job_id).first()
+    
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    # Try to get Celery task status if available
+    celery_status = None
+    try:
+        from celery.result import AsyncResult
+        from .tasks import celery_app
+        
+        # Find task_id from job params or result
+        task_id = job.params.get("task_id") if job.params else None
+        
+        if task_id:
+            task_result = AsyncResult(task_id, app=celery_app)
+            celery_status = {
+                "task_id": task_id,
+                "state": task_result.state,
+                "info": str(task_result.info) if task_result.info else None
+            }
+    except Exception as e:
+        celery_status = {"error": str(e)}
+    
+    return {
+        "job_id": job.job_id,
+        "job_type": job.job_type,
+        "status": job.status,
+        "params": job.params,
+        "result": job.result,
+        "error": job.error,
+        "created_at": job.created_at.isoformat(),
+        "started_at": job.started_at.isoformat() if job.started_at else None,
+        "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+        "duration": (job.completed_at - job.started_at).total_seconds() if job.completed_at and job.started_at else None,
+        "celery_status": celery_status
+    }
+
+
+@app.get("/api/jobs/{job_id}/logs")
+async def stream_job_logs(job_id: str, db: Session = Depends(get_db)):
+    """
+    Stream job logs in real-time using Server-Sent Events (SSE).
+    
+    This endpoint streams logs from the Celery worker for the specified job.
+    The client should use EventSource to receive updates.
+    
+    Returns:
+        StreamingResponse with text/event-stream content type
+    """
+    job = db.query(Job).filter(Job.job_id == job_id).first()
+    
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    async def log_generator():
+        """
+        Generate log events for SSE streaming.
+        
+        This reads logs from:
+        1. Docker container logs (filtered by job_id)
+        2. Job status updates from database
+        """
+        import subprocess
+        import re
+        
+        # Send initial status
+        yield f"data: {json.dumps({'type': 'status', 'status': job.status, 'job_id': job_id})}\n\n"
+        
+        # Get worker container name
+        worker_container = f"diploma_project_fed_fl_med-{settings.NODE_ID}-worker-1"
+        
+        try:
+            # Stream logs from Docker container
+            # Use --since to only get new logs (not historical ones already loaded)
+            # Get logs from the last 10 seconds to avoid missing anything
+            process = subprocess.Popen(
+                ["docker", "logs", "-f", "--since", "10s", worker_container],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1
+            )
+            
+            # Track seen log lines to avoid duplicates
+            seen_logs = set()
+            
+            # Filter logs related to this job
+            for line in iter(process.stdout.readline, ''):
+                if not line:
+                    break
+                
+                # Check if line contains job_id (strict filtering)
+                if job_id in line:
+                    line_stripped = line.strip()
+                    
+                    # Skip if we've already sent this exact log line
+                    if line_stripped in seen_logs:
+                        continue
+                    
+                    seen_logs.add(line_stripped)
+                    
+                    # Clean and format log line
+                    log_entry = {
+                        'type': 'log',
+                        'timestamp': datetime.utcnow().isoformat(),
+                        'message': line_stripped
+                    }
+                    yield f"data: {json.dumps(log_entry)}\n\n"
+                
+                # Check job status periodically
+                await asyncio.sleep(0.1)
+                
+                # Refresh job from database
+                db.refresh(job)
+                
+                # If job completed, send final status and close
+                if job.status in ['completed', 'failed']:
+                    yield f"data: {json.dumps({'type': 'status', 'status': job.status, 'result': job.result, 'error': job.error})}\n\n"
+                    yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                    break
+            
+            process.terminate()
+            
+        except Exception as e:
+            error_msg = {
+                'type': 'error',
+                'message': f"Error streaming logs: {str(e)}"
+            }
+            yield f"data: {json.dumps(error_msg)}\n\n"
+    
+    return StreamingResponse(
+        log_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"  # Disable nginx buffering
+        }
+    )
+
+
+@app.get("/api/jobs/{job_id}/logs/static")
+def get_job_logs_static(job_id: str, lines: int = 100, db: Session = Depends(get_db)):
+    """
+    Get static snapshot of job logs (non-streaming).
+    
+    Useful for completed jobs or when streaming is not needed.
+    
+    Args:
+        job_id: Job identifier
+        lines: Number of log lines to return (default 100)
+    
+    Returns:
+        List of log lines
+    """
+    job = db.query(Job).filter(Job.job_id == job_id).first()
+    
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    import subprocess
+    
+    # Get worker container name
+    worker_container = f"diploma_project_fed_fl_med-{settings.NODE_ID}-worker-1"
+    
+    try:
+        # Get logs from Docker container
+        result = subprocess.run(
+            ["docker", "logs", "--tail", str(lines), worker_container],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        
+        # Combine stdout and stderr
+        all_logs = result.stdout + result.stderr
+        
+        # Filter logs related to this job (only by job_id)
+        log_lines = []
+        for line in all_logs.split('\n'):
+            if job_id in line:
+                log_lines.append({
+                    'timestamp': datetime.utcnow().isoformat(),
+                    'message': line.strip()
+                })
+        
+        return {
+            "job_id": job_id,
+            "status": job.status,
+            "total_lines": len(log_lines),
+            "logs": log_lines
+        }
+        
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Timeout fetching logs")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching logs: {str(e)}")
 
 
 if __name__ == "__main__":

@@ -39,8 +39,12 @@ services:
       STORAGE_ROOT: /storage
       CENTRAL_URL: http://central:8081
       REDIS_URL: redis://node1-redis:6379/0
+      TZ: ${TZ:-UTC}
     volumes:
       - ./storage/node1:/storage
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
     ports:
       - "8001:8000"
     depends_on:
@@ -58,8 +62,11 @@ services:
       FLOWER_SERVER: central:8080  # Flower gRPC
       REDIS_URL: redis://node1-redis:6379/0
       DEVICE: cpu
+      TZ: ${TZ:-UTC}
     volumes:
       - ./storage/node1:/storage
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
     depends_on:
       - node1-redis
       - node1-api
@@ -90,8 +97,12 @@ services:
       STORAGE_ROOT: /storage
       CENTRAL_URL: http://central:8081
       REDIS_URL: redis://node2-redis:6379/0
+      TZ: ${TZ:-UTC}
     volumes:
       - ./storage/node2:/storage
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
     ports:
       - "8002:8000"
     depends_on:
@@ -109,8 +120,11 @@ services:
       FLOWER_SERVER: central:8080
       REDIS_URL: redis://node2-redis:6379/0
       DEVICE: cpu
+      TZ: ${TZ:-UTC}
     volumes:
       - ./storage/node2:/storage
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
     depends_on:
       - node2-redis
       - node2-api
@@ -141,8 +155,12 @@ services:
       STORAGE_ROOT: /storage
       CENTRAL_URL: http://central:8081
       REDIS_URL: redis://node3-redis:6379/0
+      TZ: ${TZ:-UTC}
     volumes:
       - ./storage/node3:/storage
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
     ports:
       - "8003:8000"
     depends_on:
@@ -160,8 +178,11 @@ services:
       FLOWER_SERVER: central:8080
       REDIS_URL: redis://node3-redis:6379/0
       DEVICE: cpu
+      TZ: ${TZ:-UTC}
     volumes:
       - ./storage/node3:/storage
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
     depends_on:
       - node3-redis
       - node3-api

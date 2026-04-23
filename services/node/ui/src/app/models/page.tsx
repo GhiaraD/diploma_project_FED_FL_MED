@@ -21,7 +21,6 @@ import {
 import {
   Refresh as RefreshIcon,
   CheckCircle as CheckCircleIcon,
-  Archive as ArchiveIcon,
 } from '@mui/icons-material';
 import Layout from '@/components/Layout';
 
@@ -30,6 +29,7 @@ interface Model {
   model_name: string;
   version: string;
   type: string;
+  labels: string[];
   round_id: string | null;
   metrics: any;
   created_at: string;
@@ -52,7 +52,13 @@ export default function ModelsPage() {
       const response = await fetch(`${apiBase}/api/models/registry`);
       if (!response.ok) throw new Error('Failed to fetch models');
       const data = await response.json();
-      setModels(data.models || []);
+      
+      // Sort models by created_at (descending - newest first)
+      const sortedModels = (data.models || []).sort((a: Model, b: Model) => {
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      });
+      
+      setModels(sortedModels);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
@@ -81,18 +87,21 @@ export default function ModelsPage() {
     }
   };
 
-  const getTypeColor = (type: string) => {
-    switch (type) {
-      case 'deployed':
+  const getLabelColor = (label: string) => {
+    switch (label) {
+      case 'active':
         return 'success';
+      case 'global':
+        return 'primary';
       case 'candidate':
         return 'warning';
-      case 'archived':
-        return 'default';
       default:
         return 'default';
     }
   };
+
+  // Get active model
+  const activeModel = models.find(m => m.labels?.includes('active'));
 
   return (
     <Layout title="Models">
@@ -116,6 +125,83 @@ export default function ModelsPage() {
           </Alert>
         )}
 
+        {/* Active Model Card */}
+        {!loading && activeModel && (
+          <Paper sx={{ p: 3, mb: 3 }}>
+            <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+              <CheckCircleIcon color="success" />
+              Active Model
+            </Typography>
+            <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 3 }}>
+              {/* Column 1 */}
+              <Box>
+                <Typography variant="body2" color="text.secondary" gutterBottom sx={{ fontSize: '1.1rem', fontWeight: 'bold' }}>
+                  Model ID
+                </Typography>
+                <Typography variant="body1" sx={{ fontFamily: 'monospace', fontSize: '0.95rem', mb: 2 }}>
+                  {activeModel.model_id}
+                </Typography>
+                
+                <Typography variant="body2" color="text.secondary" gutterBottom sx={{ fontSize: '1.1rem', fontWeight: 'bold' }}>
+                  Architecture
+                </Typography>
+                <Typography variant="body1" fontWeight="bold" sx={{ mb: 2 }}>
+                  {activeModel.model_name}
+                </Typography>
+              </Box>
+
+              {/* Column 2 */}
+              <Box>
+                <Typography variant="body2" color="text.secondary" gutterBottom sx={{ fontSize: '1.1rem', fontWeight: 'bold' }}>
+                  Version
+                </Typography>
+                <Typography variant="body1" sx={{ mb: 2 }}>
+                  {activeModel.version}
+                </Typography>
+                
+                <Typography variant="body2" color="text.secondary" gutterBottom sx={{ fontSize: '1.1rem', fontWeight: 'bold' }}>
+                  Created
+                </Typography>
+                <Typography variant="body1">
+                  {new Date(activeModel.created_at).toLocaleString()}
+                </Typography>
+              </Box>
+
+              {/* Column 3 */}
+              <Box>
+                <Typography variant="body2" color="text.secondary" gutterBottom sx={{ fontSize: '1.1rem', fontWeight: 'bold' }}>
+                  Accuracy
+                </Typography>
+                <Typography variant="h6" color="success.dark" fontWeight="bold" sx={{ mb: 2 }}>
+                  {activeModel.metrics?.accuracy 
+                    ? (activeModel.metrics.accuracy * 100).toFixed(2) + '%'
+                    : 'N/A'}
+                </Typography>
+                
+                <Typography variant="body2" color="text.secondary" gutterBottom sx={{ fontSize: '1.1rem', fontWeight: 'bold' }}>
+                  Labels
+                </Typography>
+                <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+                  {activeModel.labels.map((label) => (
+                    <Chip
+                      key={label}
+                      label={label}
+                      size="small"
+                      color={getLabelColor(label) as any}
+                    />
+                  ))}
+                </Box>
+              </Box>
+            </Box>
+          </Paper>
+        )}
+
+        {!loading && !activeModel && (
+          <Alert severity="info" sx={{ mb: 3 }}>
+            No active model deployed. Promote a model to use it for inference.
+          </Alert>
+        )}
+
         {loading ? (
           <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
             <CircularProgress />
@@ -128,7 +214,7 @@ export default function ModelsPage() {
                   <TableCell>Model ID</TableCell>
                   <TableCell>Architecture</TableCell>
                   <TableCell>Version</TableCell>
-                  <TableCell>Type</TableCell>
+                  <TableCell>Labels</TableCell>
                   <TableCell>Round ID</TableCell>
                   <TableCell>Accuracy</TableCell>
                   <TableCell>Created At</TableCell>
@@ -155,11 +241,16 @@ export default function ModelsPage() {
                       <TableCell>{model.model_name}</TableCell>
                       <TableCell>{model.version}</TableCell>
                       <TableCell>
-                        <Chip
-                          label={model.type}
-                          size="small"
-                          color={getTypeColor(model.type) as any}
-                        />
+                        <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+                          {(model.labels || []).map((label) => (
+                            <Chip
+                              key={label}
+                              label={label}
+                              size="small"
+                              color={getLabelColor(label) as any}
+                            />
+                          ))}
+                        </Box>
                       </TableCell>
                       <TableCell>
                         {model.round_id || '-'}
@@ -173,8 +264,8 @@ export default function ModelsPage() {
                         {new Date(model.created_at).toLocaleString()}
                       </TableCell>
                       <TableCell align="center">
-                        {model.type === 'candidate' && (
-                          <Tooltip title="Promote to Deployed">
+                        {!model.labels?.includes('active') && (
+                          <Tooltip title="Promote to Active">
                             <IconButton
                               size="small"
                               color="primary"
@@ -189,11 +280,8 @@ export default function ModelsPage() {
                             </IconButton>
                           </Tooltip>
                         )}
-                        {model.type === 'deployed' && (
-                          <Chip label="Active" size="small" color="success" icon={<CheckCircleIcon />} />
-                        )}
-                        {model.type === 'archived' && (
-                          <ArchiveIcon fontSize="small" color="disabled" />
+                        {model.labels?.includes('active') && (
+                          <Chip label="In Use" size="small" color="success" icon={<CheckCircleIcon />} />
                         )}
                       </TableCell>
                     </TableRow>
@@ -207,24 +295,24 @@ export default function ModelsPage() {
         {/* Legend */}
         <Paper sx={{ p: 2, mt: 2 }}>
           <Typography variant="subtitle2" gutterBottom>
-            Model Types:
+            Model Labels:
           </Typography>
+          <Box sx={{ display: 'flex', gap: 2, mb: 1 }}>
+            <Chip label="active" size="small" color="success" />
+            <Typography variant="body2" sx={{ alignSelf: 'center' }}>
+              - Currently deployed model used for inference
+            </Typography>
+          </Box>
+          <Box sx={{ display: 'flex', gap: 2, mb: 1 }}>
+            <Chip label="global" size="small" color="primary" />
+            <Typography variant="body2" sx={{ alignSelf: 'center' }}>
+              - Best model (highest accuracy)
+            </Typography>
+          </Box>
           <Box sx={{ display: 'flex', gap: 2 }}>
-            <Chip label="Candidate" size="small" color="warning" />
+            <Chip label="candidate" size="small" color="warning" />
             <Typography variant="body2" sx={{ alignSelf: 'center' }}>
-              - Newly trained models awaiting promotion
-            </Typography>
-          </Box>
-          <Box sx={{ display: 'flex', gap: 2, mt: 1 }}>
-            <Chip label="Deployed" size="small" color="success" />
-            <Typography variant="body2" sx={{ alignSelf: 'center' }}>
-              - Active model used for inference
-            </Typography>
-          </Box>
-          <Box sx={{ display: 'flex', gap: 2, mt: 1 }}>
-            <Chip label="Archived" size="small" />
-            <Typography variant="body2" sx={{ alignSelf: 'center' }}>
-              - Previous versions no longer in use
+              - Models available for promotion
             </Typography>
           </Box>
         </Paper>

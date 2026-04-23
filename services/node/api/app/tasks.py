@@ -18,6 +18,13 @@ from node_core import (
     compute_model_hash
 )
 
+def get_local_now():
+    """
+    Get current datetime in local system timezone.
+    Automatically detects the timezone from the system.
+    """
+    return datetime.now().astimezone()
+
 from .config import settings
 from .database import SessionLocal, Job, Model, InferenceResult
 import torch
@@ -47,9 +54,9 @@ def update_job_status(job_id: str, status: str, result=None, error=None):
         if job:
             job.status = status
             if status == "running" and not job.started_at:
-                job.started_at = datetime.utcnow()
+                job.started_at = get_local_now()
             if status in ["completed", "failed"]:
-                job.completed_at = datetime.utcnow()
+                job.completed_at = get_local_now()
             if result:
                 job.result = result
             if error:
@@ -202,16 +209,23 @@ def run_inference_task(
         generate_gradcam: Whether to generate Grad-CAM overlays
     """
     try:
+        print(f"[{job_id}] 🚀 Starting inference job")
+        print(f"[{job_id}] 📊 Processing {len(image_paths)} image(s)")
+        print(f"[{job_id}] 🎨 Grad-CAM visualization: {'enabled' if generate_gradcam else 'disabled'}")
+        
         update_job_status(job_id, "running")
         
         # Get model
         db = SessionLocal()
         
+        print(f"[{job_id}] 🔍 Looking for model...")
         if model_id:
             model_record = db.query(Model).filter(Model.model_id == model_id).first()
+            print(f"[{job_id}] 📦 Using specified model: {model_id}")
         else:
             # Use deployed model
             model_record = db.query(Model).filter(Model.type == "deployed").first()
+            print(f"[{job_id}] 📦 Using deployed model")
         
         if not model_record:
             raise ValueError("No model found")
@@ -220,36 +234,46 @@ def run_inference_task(
         model_path = model_record.file_path
         
         # Load model
-        print(f"[{settings.NODE_ID}] Loading model {model_id}...")
+        print(f"[{job_id}] 🧠 Loading model: {model_name}")
+        print(f"[{job_id}] 📂 Model path: {model_path}")
+        print(f"[{job_id}] 💻 Device: {settings.DEVICE}")
         model, metadata = load_model(model_name, model_path, device=settings.DEVICE)
+        print(f"[{job_id}] ✓ Model loaded successfully")
         
         # Prepare images
+        print(f"[{job_id}] 🖼️  Preparing images for inference...")
         from PIL import Image
         from node_core import get_val_transforms
         
         transform = get_val_transforms()
         images_tensors = []
         
-        for img_path in image_paths:
+        for idx, img_path in enumerate(image_paths, 1):
+            print(f"[{job_id}]   └─ Loading image {idx}/{len(image_paths)}: {os.path.basename(img_path)}")
             img = Image.open(img_path).convert('RGB')
             img_tensor = transform(img)
             images_tensors.append(img_tensor)
         
+        print(f"[{job_id}] ✓ All images prepared")
+        
         # Run inference
-        print(f"[{settings.NODE_ID}] Running inference on {len(images_tensors)} images...")
+        print(f"[{job_id}] 🔮 Running inference...")
         batch_tensor = torch.stack(images_tensors)
         
         pred_classes, confidences, probs = predict_batch(
             model, batch_tensor, device=settings.DEVICE
         )
+        print(f"[{job_id}] ✓ Inference completed")
         
         # Generate Grad-CAM if requested
         gradcam_paths = []
         if generate_gradcam:
+            print(f"[{job_id}] 🎨 Generating Grad-CAM visualizations...")
             target_layer = get_final_conv_layer(model, model_name)
             gradcam = GradCAM(model, target_layer)
             
             for i, (img_path, img_tensor) in enumerate(zip(image_paths, images_tensors)):
+                print(f"[{job_id}]   └─ Generating Grad-CAM {i+1}/{len(image_paths)}")
                 # Load original image to get dimensions
                 img = Image.open(img_path).convert('RGB')
                 import numpy as np
@@ -269,15 +293,22 @@ def run_inference_task(
                 )
                 save_gradcam_overlay(img_np, heatmap_resized, overlay_path)
                 gradcam_paths.append(overlay_path)
+            
+            print(f"[{job_id}] ✓ Grad-CAM visualizations saved")
         else:
             gradcam_paths = [None] * len(image_paths)
         
         # Save results to database
+        print(f"[{job_id}] 💾 Saving results to database...")
         results = []
         for i, (img_path, pred_cls, conf, prob) in enumerate(
             zip(image_paths, pred_classes, confidences, probs)
         ):
             result_id = f"{job_id}_{i}"
+            
+            # Log prediction details
+            class_name = "PNEUMONIA" if pred_cls == 1 else "NORMAL"
+            print(f"[{job_id}]   └─ Image {i+1}: {class_name} (confidence: {conf:.2%})")
             
             result_record = InferenceResult(
                 result_id=result_id,
@@ -301,6 +332,8 @@ def run_inference_task(
         db.commit()
         db.close()
         
+        print(f"[{job_id}] ✓ Results saved to database")
+        
         result = {
             'num_images': len(image_paths),
             'results': results
@@ -308,12 +341,14 @@ def run_inference_task(
         
         update_job_status(job_id, "completed", result=result)
         
-        print(f"[{settings.NODE_ID}] ✓ Inference completed")
+        print(f"[{job_id}] ✅ Inference job completed successfully")
+        print(f"[{job_id}] 📈 Summary: {len(image_paths)} image(s) processed")
         
         return result
         
     except Exception as e:
-        print(f"[{settings.NODE_ID}] ✗ Inference failed: {e}")
+        print(f"[{job_id}] ❌ Inference job failed: {str(e)}")
+        print(f"[{job_id}] 🔍 Error details: {type(e).__name__}")
         update_job_status(job_id, "failed", error=str(e))
         raise
 
