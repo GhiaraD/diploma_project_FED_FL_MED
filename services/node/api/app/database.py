@@ -74,6 +74,7 @@ class Dataset(Base):
     num_samples = Column(Integer)
     num_normal = Column(Integer, nullable=True)
     num_pneumonia = Column(Integer, nullable=True)
+    is_active = Column(Integer, default=0)  # 1 if active dataset for training, 0 otherwise
     created_at = Column(DateTime, default=get_local_now)
 
 

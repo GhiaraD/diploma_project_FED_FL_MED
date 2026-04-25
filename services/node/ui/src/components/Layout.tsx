@@ -28,11 +28,10 @@ const drawerWidth = 240;
 
 const menuItems = [
   { text: 'Dashboard', icon: <DashboardIcon />, href: '/' },
-  { text: 'Studies', icon: <FolderIcon />, href: '/studies' },
-  { text: 'Inference', icon: <PsychologyIcon />, href: '/inference' },
-  { text: 'Train', icon: <SchoolIcon />, href: '/train' },
+  { text: 'Datasets', icon: <FolderIcon />, href: '/datasets' },
   { text: 'Federated', icon: <HubIcon />, href: '/federated' },
   { text: 'Models', icon: <StorageIcon />, href: '/models' },
+  { text: 'Inference', icon: <PsychologyIcon />, href: '/inference' },
   { text: 'Jobs', icon: <WorkIcon />, href: '/jobs' },
 ];
 

@@ -8,42 +8,20 @@ import {
   Typography, 
   Card, 
   CardContent,
-  AppBar,
-  Toolbar,
-  Drawer,
-  List,
-  ListItem,
-  ListItemButton,
-  ListItemIcon,
-  ListItemText,
-  Divider,
   CircularProgress,
   Alert
 } from '@mui/material';
 import {
-  Dashboard as DashboardIcon,
   Folder as FolderIcon,
   Psychology as PsychologyIcon,
-  School as SchoolIcon,
   Hub as HubIcon,
   Storage as StorageIcon,
+  Work as WorkIcon,
 } from '@mui/icons-material';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-
-const drawerWidth = 240;
-
-const menuItems = [
-  { text: 'Dashboard', icon: <DashboardIcon />, href: '/' },
-  { text: 'Studies', icon: <FolderIcon />, href: '/studies' },
-  { text: 'Inference', icon: <PsychologyIcon />, href: '/inference' },
-  { text: 'Train', icon: <SchoolIcon />, href: '/train' },
-  { text: 'Federated', icon: <HubIcon />, href: '/federated' },
-  { text: 'Models', icon: <StorageIcon />, href: '/models' },
-];
+import Layout from '@/components/Layout';
 
 export default function DashboardPage() {
-  const pathname = usePathname();
   const [nodeStatus, setNodeStatus] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -70,48 +48,8 @@ export default function DashboardPage() {
   };
 
   return (
-    <Box sx={{ display: 'flex' }}>
-      {/* AppBar */}
-      <AppBar position="fixed" sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}>
-        <Toolbar>
-          <Typography variant="h6" noWrap component="div">
-            Fed-Med-FL - {nodeStatus?.node_id || 'Node Portal'}
-          </Typography>
-        </Toolbar>
-      </AppBar>
-
-      {/* Drawer */}
-      <Drawer
-        variant="permanent"
-        sx={{
-          width: drawerWidth,
-          flexShrink: 0,
-          [`& .MuiDrawer-paper`]: { width: drawerWidth, boxSizing: 'border-box' },
-        }}
-      >
-        <Toolbar />
-        <Box sx={{ overflow: 'auto' }}>
-          <List>
-            {menuItems.map((item) => (
-              <ListItem key={item.text} disablePadding>
-                <ListItemButton
-                  component={Link}
-                  href={item.href}
-                  selected={pathname === item.href}
-                >
-                  <ListItemIcon>{item.icon}</ListItemIcon>
-                  <ListItemText primary={item.text} />
-                </ListItemButton>
-              </ListItem>
-            ))}
-          </List>
-        </Box>
-      </Drawer>
-
-      {/* Main Content */}
-      <Box component="main" sx={{ flexGrow: 1, p: 3 }}>
-        <Toolbar />
-        <Container maxWidth="lg">
+    <Layout title="Dashboard" nodeId={nodeStatus?.node_id}>
+      <Container maxWidth="lg">
           <Typography variant="h4" gutterBottom>
             Dashboard
           </Typography>
@@ -253,36 +191,12 @@ export default function DashboardPage() {
                 </Typography>
                 <Grid container spacing={2}>
                   <Grid item={true}>
-                    <Link href="/studies" style={{ textDecoration: 'none' }}>
+                    <Link href="/datasets" style={{ textDecoration: 'none' }}>
                       <Card sx={{ minWidth: 150, cursor: 'pointer', '&:hover': { bgcolor: 'action.hover' } }}>
                         <CardContent>
                           <FolderIcon sx={{ fontSize: 40, color: 'primary.main' }} />
                           <Typography variant="body1" sx={{ mt: 1 }}>
-                            Upload Dataset
-                          </Typography>
-                        </CardContent>
-                      </Card>
-                    </Link>
-                  </Grid>
-                  <Grid item={true}>
-                    <Link href="/inference" style={{ textDecoration: 'none' }}>
-                      <Card sx={{ minWidth: 150, cursor: 'pointer', '&:hover': { bgcolor: 'action.hover' } }}>
-                        <CardContent>
-                          <PsychologyIcon sx={{ fontSize: 40, color: 'primary.main' }} />
-                          <Typography variant="body1" sx={{ mt: 1 }}>
-                            Run Inference
-                          </Typography>
-                        </CardContent>
-                      </Card>
-                    </Link>
-                  </Grid>
-                  <Grid item={true}>
-                    <Link href="/train" style={{ textDecoration: 'none' }}>
-                      <Card sx={{ minWidth: 150, cursor: 'pointer', '&:hover': { bgcolor: 'action.hover' } }}>
-                        <CardContent>
-                          <SchoolIcon sx={{ fontSize: 40, color: 'primary.main' }} />
-                          <Typography variant="body1" sx={{ mt: 1 }}>
-                            Train Model
+                            Datasets
                           </Typography>
                         </CardContent>
                       </Card>
@@ -294,7 +208,43 @@ export default function DashboardPage() {
                         <CardContent>
                           <HubIcon sx={{ fontSize: 40, color: 'primary.main' }} />
                           <Typography variant="body1" sx={{ mt: 1 }}>
-                            Join FL Round
+                            Federated
+                          </Typography>
+                        </CardContent>
+                      </Card>
+                    </Link>
+                  </Grid>
+                  <Grid item={true}>
+                    <Link href="/models" style={{ textDecoration: 'none' }}>
+                      <Card sx={{ minWidth: 150, cursor: 'pointer', '&:hover': { bgcolor: 'action.hover' } }}>
+                        <CardContent>
+                          <StorageIcon sx={{ fontSize: 40, color: 'primary.main' }} />
+                          <Typography variant="body1" sx={{ mt: 1 }}>
+                            Models
+                          </Typography>
+                        </CardContent>
+                      </Card>
+                    </Link>
+                  </Grid>
+                  <Grid item={true}>
+                    <Link href="/inference" style={{ textDecoration: 'none' }}>
+                      <Card sx={{ minWidth: 150, cursor: 'pointer', '&:hover': { bgcolor: 'action.hover' } }}>
+                        <CardContent>
+                          <PsychologyIcon sx={{ fontSize: 40, color: 'primary.main' }} />
+                          <Typography variant="body1" sx={{ mt: 1 }}>
+                            Inference
+                          </Typography>
+                        </CardContent>
+                      </Card>
+                    </Link>
+                  </Grid>
+                  <Grid item={true}>
+                    <Link href="/jobs" style={{ textDecoration: 'none' }}>
+                      <Card sx={{ minWidth: 150, cursor: 'pointer', '&:hover': { bgcolor: 'action.hover' } }}>
+                        <CardContent>
+                          <WorkIcon sx={{ fontSize: 40, color: 'primary.main' }} />
+                          <Typography variant="body1" sx={{ mt: 1 }}>
+                            Jobs
                           </Typography>
                         </CardContent>
                       </Card>
@@ -305,7 +255,6 @@ export default function DashboardPage() {
             </>
           )}
         </Container>
-      </Box>
-    </Box>
+    </Layout>
   );
 }

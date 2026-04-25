@@ -135,6 +135,7 @@ class DatasetInfo(BaseModel):
     num_samples: int
     num_normal: int
     num_pneumonia: int
+    is_active: bool = False
     created_at: str
 
 
@@ -144,3 +145,10 @@ class DatasetUploadResponse(BaseModel):
     num_samples: int
     num_normal: int
     num_pneumonia: int
+
+
+class DatasetRegisterRequest(BaseModel):
+    path: str
+    name: str
+    split: str = "train"
+

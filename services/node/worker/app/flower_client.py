@@ -25,6 +25,12 @@ from node_core import (
     compute_metrics,
 )
 
+# Global variable to store last training metrics
+_last_training_metrics = None
+
+# Global variable to store trained model
+_trained_model = None
+
 
 class FedMedClient(fl.client.NumPyClient):
     """
@@ -145,6 +151,8 @@ class FedMedClient(fl.client.NumPyClient):
             - Number of training samples
             - Metrics dict
         """
+        global _last_training_metrics, _trained_model
+        
         print(f"\n[{self.node_id}] {'='*50}")
         print(f"[{self.node_id}] Starting local training...")
         print(f"[{self.node_id}] {'='*50}")
@@ -193,6 +201,10 @@ class FedMedClient(fl.client.NumPyClient):
             "train_loss": history['train_loss'][-1],
             "val_loss": history['val_loss'][-1],
         }
+        
+        # Store metrics globally for retrieval after training
+        _last_training_metrics = metrics
+        _trained_model = self.model
         
         print(f"\n[{self.node_id}] ✓ Training complete:")
         print(f"  - Best accuracy: {metrics['accuracy']:.4f}")
@@ -269,6 +281,28 @@ class FedMedClient(fl.client.NumPyClient):
         return avg_loss, num_samples, metrics
 
 
+def get_last_training_metrics():
+    """
+    Get metrics from the last training round.
+    
+    Returns:
+        Dict with training metrics or None if no training has occurred
+    """
+    global _last_training_metrics
+    return _last_training_metrics
+
+
+def get_trained_model():
+    """
+    Get the trained model from the last training round.
+    
+    Returns:
+        Trained PyTorch model or None if no training has occurred
+    """
+    global _trained_model
+    return _trained_model
+
+
 def start_flower_client(
     server_address: str,
     node_id: str,
@@ -277,6 +311,7 @@ def start_flower_client(
     dataset_path: str,
     device: str = "cpu",
     batch_size: int = 32,
+    round_id: str = None,
 ):
     """
     Start Flower client and connect to server.
@@ -289,6 +324,7 @@ def start_flower_client(
         dataset_path: Path to dataset
         device: Device (cpu/cuda)
         batch_size: Batch size
+        round_id: FL round identifier (for model saving)
     """
     print("=" * 70)
     print(f"FED-MED-FL FLOWER CLIENT - {node_id}")
@@ -319,6 +355,32 @@ def start_flower_client(
         )
         
         print(f"\n[{node_id}] ✓ Disconnected from server")
+        
+        # Save the trained model after FL completes
+        if round_id:
+            from node_core import save_model
+            model_id = f"{model_name}_{round_id}_flower"
+            model_dir = Path("/storage/models/candidate")
+            model_dir.mkdir(parents=True, exist_ok=True)
+            model_path = model_dir / f"{model_id}.pt"
+            
+            print(f"[{node_id}] 💾 Saving trained model to {model_path}...")
+            
+            # Get metrics
+            global _last_training_metrics
+            metrics = _last_training_metrics
+            
+            # Save model with metadata
+            metadata = {
+                'round_id': round_id,
+                'model_name': model_name,
+                'training_type': 'federated',
+                'node_id': node_id,
+                'metrics': metrics
+            }
+            
+            save_model(client.model, str(model_path), metadata)
+            print(f"[{node_id}] ✅ Model saved successfully")
         
     except KeyboardInterrupt:
         print(f"\n[{node_id}] Interrupted by user")

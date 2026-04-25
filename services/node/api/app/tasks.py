@@ -3,6 +3,7 @@ Celery tasks for asynchronous job processing.
 """
 from celery import Celery
 from datetime import datetime
+from pathlib import Path
 import os
 import sys
 
@@ -357,7 +358,8 @@ def run_inference_task(
 def federated_training_task(
     job_id: str,
     round_id: str,
-    dataset_id: str
+    dataset_id: str,
+    model_name: str = "efficientnet_b0"
 ):
     """
     Federated training with Flower.
@@ -369,7 +371,11 @@ def federated_training_task(
         job_id: Job identifier
         round_id: FL round identifier (for tracking)
         dataset_id: Local dataset identifier
+        model_name: Model architecture name
     """
+    import io
+    import contextlib
+    
     try:
         update_job_status(job_id, "running")
         
@@ -383,19 +389,29 @@ def federated_training_task(
         
         dataset_path = dataset.path
         n_samples = dataset.num_samples
+        dataset_name = dataset.name
         
-        print(f"[{settings.NODE_ID}] Starting Flower client for round {round_id}...")
-        print(f"[{settings.NODE_ID}] Dataset: {dataset_path} ({n_samples} samples)")
+        log_buffer = io.StringIO()
+        
+        def log_and_capture(msg):
+            """Log to console and capture to buffer."""
+            print(msg)
+            log_buffer.write(msg + "\n")
+        
+        log_and_capture(f"[{settings.NODE_ID}] 🚀 Starting Flower client for round {round_id}...")
+        log_and_capture(f"[{settings.NODE_ID}] 📊 Model: {model_name}")
+        log_and_capture(f"[{settings.NODE_ID}] 📁 Dataset: {dataset_name} ({dataset_id})")
+        log_and_capture(f"[{settings.NODE_ID}] 📍 Path: {dataset_path}")
+        log_and_capture(f"[{settings.NODE_ID}] 🔢 Samples: {n_samples}")
         
         # Import and start Flower client directly
         # Note: This runs in the worker container which has flower_client.py
         sys.path.insert(0, '/app/worker')
-        from flower_client import start_flower_client
-        
-        # Get model name from environment or default to efficientnet_b0
-        model_name = os.getenv("MODEL_NAME", "efficientnet_b0")
+        from flower_client import start_flower_client, get_last_training_metrics
         
         # Start Flower client (blocking call - will run until FL rounds complete)
+        log_and_capture(f"[{settings.NODE_ID}] 🔗 Connecting to Flower server...")
+        
         start_flower_client(
             server_address=settings.FLOWER_SERVER,
             node_id=settings.NODE_ID,
@@ -403,33 +419,86 @@ def federated_training_task(
             num_classes=2,
             dataset_path=dataset_path,
             device=settings.DEVICE,
-            batch_size=32
+            batch_size=32,
+            round_id=round_id  # ← Nou
         )
         
-        print(f"[{settings.NODE_ID}] Flower client completed successfully")
+        log_and_capture(f"[{settings.NODE_ID}] ✅ Flower client completed successfully")
         
-        # After FL completes, save final model as candidate
-        # Note: The actual model is saved by Flower client during training
-        # Here we just update the database
-        model_id = f"resnet18_{round_id}_flower"
+        # Get training metrics from the last fit() call
+        metrics = get_last_training_metrics()
+        
+        # The model is saved by Flower client during training
+        # Check if model file exists
+        model_id = f"{model_name}_{round_id}_flower"
+        model_dir = Path(settings.STORAGE_ROOT) / "models" / "candidate"
+        model_path = model_dir / f"{model_id}.pt"
+        
+        model_saved = False
+        if model_path.exists():
+            log_and_capture(f"[{settings.NODE_ID}] ✅ Model found at {model_path}")
+            model_saved = True
+            
+            # Register model in database
+            from .database import Model
+            db_model = Model(
+                model_id=model_id,
+                model_name=model_name,
+                version=round_id,
+                type="candidate",
+                labels=["candidate", "federated"],
+                round_id=round_id,
+                file_path=str(model_path),
+                metrics=metrics
+            )
+            db.add(db_model)
+            db.commit()
+            log_and_capture(f"[{settings.NODE_ID}] ✅ Model registered in database")
+        else:
+            log_and_capture(f"[{settings.NODE_ID}] ⚠️ Warning: Model file not found at {model_path}")
         
         result = {
             'round_id': round_id,
             'model_id': model_id,
+            'model_name': model_name,
+            'dataset_id': dataset_id,
+            'dataset_name': dataset_name,
             'n_samples': n_samples,
+            'metrics': metrics,
+            'model_path': str(model_path) if model_saved else None,
             'status': 'completed',
             'note': 'Trained with Flower framework'
         }
         
+        log_and_capture(f"[{settings.NODE_ID}] 📈 Final metrics: {metrics}")
+        log_and_capture(f"[{settings.NODE_ID}] ✓ Training completed for round {round_id}")
+        
+        # Save logs to shared storage (accessible from API)
+        log_dir = Path(settings.STORAGE_ROOT) / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / f"federated_train_{job_id}.log"
+        
+        with open(log_file, 'w') as f:
+            f.write(log_buffer.getvalue())
+        
+        log_and_capture(f"[{settings.NODE_ID}] 📝 Logs saved to {log_file}")
+        
         db.close()
         update_job_status(job_id, "completed", result=result)
-        
-        print(f"[{settings.NODE_ID}] ✓ Flower training completed for round {round_id}")
         
         return result
         
     except Exception as e:
-        print(f"[{settings.NODE_ID}] ✗ Flower training failed: {e}")
+        error_msg = f"[{settings.NODE_ID}] ✗ Flower training failed: {e}"
+        print(error_msg)
+        if 'log_buffer' in locals():
+            log_buffer.write(error_msg + "\n")
+            log_dir = Path(settings.STORAGE_ROOT) / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log_file = log_dir / f"federated_train_{job_id}.log"
+            with open(log_file, 'w') as f:
+                f.write(log_buffer.getvalue())
+        
         import traceback
         traceback.print_exc()
         update_job_status(job_id, "failed", error=str(e))

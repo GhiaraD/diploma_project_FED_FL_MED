@@ -1,8 +1,8 @@
 # Fed-Med-FL - Project Overview
 
-**Versiune**: 0.2.1 (Enhanced Observability & UI)  
-**Status**: 85% Complete  
-**Data**: 2026-04-23
+**Versiune**: 0.2.2 (Federated UI Improvements)  
+**Status**: 87% Complete  
+**Data**: 2026-04-25
 
 ---
 
@@ -31,7 +31,7 @@ Fiecare nod: FastAPI + Celery Worker + Flower Client + Next.js UI + Redis + SQLi
 ## 📊 Status Implementare
 
 ```
-[████████████████████████████████████] 83%
+[████████████████████████████████████] 87%
 
 ✅ Faza 1: ML Modularization (1,500 linii)
 ✅ Faza 2: FL Core - Flower Migration (800 linii)
@@ -39,11 +39,12 @@ Fiecare nod: FastAPI + Celery Worker + Flower Client + Next.js UI + Redis + SQLi
 ✅ Faza 4: Central Orchestrator (630 linii)
 ✅ Faza 5: UI (Node Portal) (1,600 linii)
 ✅ Faza 6: Storage + Testing (800 linii)
+✅ Faza 6.5: Federated UI Improvements (200 linii)
 🔄 Faza 7: Demo End-to-End
 📅 Faza 8: Securitate (opțional)
 ```
 
-**Total**: ~7,330 linii cod
+**Total**: ~7,530 linii cod
 
 ---
 
@@ -211,7 +212,15 @@ fed-med-fl/
 ### 4. Testing Infrastructure
 - **E2E automat**: Test complet în 5-10 minute
 - **E2E manual**: Pași interactivi pentru debugging
-- **Comenzi**: `make test-e2e`, `make create-datasets`
+- **Federated UI test**: Test specific pentru UI improvements
+- **Comenzi**: `make test-e2e`, `make create-datasets`, `./scripts/test_federated_ui.sh`
+
+### 5. Federated UI Improvements (Aprilie 2026)
+- **Dataset Display**: Afișare nume + ID în tabel și detalii
+- **Metrics Display**: Accuracy, loss, și alte metrici în UI
+- **Log Collection**: Capturare și salvare logs pentru job-uri federate
+- **Enhanced Details**: Dialog îmbunătățit cu informații complete
+- **Cod**: ~200 linii (backend + frontend improvements)
 
 ---
 
@@ -295,13 +304,13 @@ docker compose up -d node1-ui node2-ui node3-ui
 
 ## 📊 Metrici Proiect
 
-- **Total linii cod**: ~8,000 linii (+670 față de v0.2.0)
+- **Total linii cod**: ~8,200 linii (+870 față de v0.2.0)
 - **Reducere prin Flower**: -400 linii (-33%)
 - **Endpoints API**: 25+ REST endpoints
 - **Celery tasks**: 3 tasks (train, infer, federated_train)
 - **Database tables**: 4 tables (models, jobs, datasets, inference_results)
-- **UI pages**: 6 pagini complete (redesigned inference page)
-- **Documentație**: 35+ fișiere markdown (~18,000 linii)
+- **UI pages**: 6 pagini complete (redesigned inference + improved federated)
+- **Documentație**: 37+ fișiere markdown (~20,000 linii)
 
 ---
 
@@ -338,10 +347,11 @@ docker compose up -d node1-ui node2-ui node3-ui
 
 ## ✅ Status Final
 
-**Proiect**: ✅ 85% Complete  
+**Proiect**: ✅ 87% Complete  
 **Flower Migration**: ✅ Complete  
 **Observabilitate**: ✅ Complete  
 **Inference UI**: ✅ Complete  
+**Federated UI**: ✅ Complete  
 **Testing**: ✅ Complete  
 **Documentație**: ✅ Complete  
 
@@ -349,6 +359,6 @@ docker compose up -d node1-ui node2-ui node3-ui
 
 ---
 
-**Ultima actualizare**: 2026-04-23  
-**Versiune**: 0.2.1 (Enhanced Observability & UI)  
+**Ultima actualizare**: 2026-04-25  
+**Versiune**: 0.2.2 (Federated UI Improvements)  
 **Autor**: Fed-Med-FL Team

@@ -17,7 +17,7 @@ from .schemas import (
     JobInfo, JobCreateResponse,
     TrainRequest, InferRequest, InferResponse,
     FederatedJoinRequest, FederatedStatusResponse,
-    DatasetInfo, DatasetUploadResponse,
+    DatasetInfo, DatasetUploadResponse, DatasetRegisterRequest,
     HealthResponse, NodeStatusResponse
 )
 
@@ -92,57 +92,187 @@ def node_status(db: Session = Depends(get_db)):
 # Dataset Management Endpoints
 # ============================================================================
 
-@app.post("/api/data/upload", response_model=DatasetUploadResponse)
-async def upload_dataset(
-    file: UploadFile = File(...),
-    split: str = "train",
+@app.get("/api/data/browse")
+def browse_filesystem(
+    directory: str = None,
     db: Session = Depends(get_db)
 ):
     """
-    Upload dataset (ZIP file with NORMAL/PNEUMONIA folders).
+    Browse filesystem for existing datasets.
     
-    Expected structure:
-        dataset.zip
-        ├── NORMAL/
-        │   ├── image1.jpg
-        │   └── ...
-        └── PNEUMONIA/
-            ├── image1.jpg
-            └── ...
+    Simulates hospital system where data already exists on-premise.
+    Returns directories and their contents for dataset selection.
+    
+    Args:
+        directory: Path to browse (defaults to storage root)
+    
+    Returns:
+        List of directories and files
     """
-    # Generate dataset ID
-    dataset_id = f"dataset_{split}_{uuid.uuid4().hex[:8]}"
-    dataset_path = os.path.join(settings.DATASETS_DIR, dataset_id)
+    # Default to datasets directory
+    if not directory:
+        directory = settings.DATASETS_DIR
     
-    # Save uploaded file
-    zip_path = f"{dataset_path}.zip"
-    os.makedirs(os.path.dirname(zip_path), exist_ok=True)
+    # Security: restrict to allowed directories
+    allowed_dirs = [
+        settings.DATASETS_DIR,
+        settings.STORAGE_ROOT,
+        "/hospital_data",
+        "/mnt/radiology"
+    ]
     
-    with open(zip_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    # Check if directory is allowed
+    if not any(directory.startswith(allowed) for allowed in allowed_dirs):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Access to directory '{directory}' is not allowed"
+        )
     
-    # Extract ZIP
-    import zipfile
-    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-        zip_ref.extractall(dataset_path)
+    if not os.path.exists(directory):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Directory not found: {directory}"
+        )
     
-    # Remove ZIP file
-    os.remove(zip_path)
+    # List contents
+    subdirs = []
+    files = []
+    
+    try:
+        for item in os.listdir(directory):
+            item_path = os.path.join(directory, item)
+            
+            if os.path.isdir(item_path):
+                # Check if it looks like a dataset (has NORMAL/PNEUMONIA folders)
+                is_dataset = (
+                    os.path.exists(os.path.join(item_path, "NORMAL")) and
+                    os.path.exists(os.path.join(item_path, "PNEUMONIA"))
+                )
+                
+                # Count samples if it's a dataset
+                num_samples = 0
+                num_normal = 0
+                num_pneumonia = 0
+                
+                if is_dataset:
+                    normal_path = os.path.join(item_path, "NORMAL")
+                    pneumonia_path = os.path.join(item_path, "PNEUMONIA")
+                    num_normal = len([f for f in os.listdir(normal_path) if os.path.isfile(os.path.join(normal_path, f))])
+                    num_pneumonia = len([f for f in os.listdir(pneumonia_path) if os.path.isfile(os.path.join(pneumonia_path, f))])
+                    num_samples = num_normal + num_pneumonia
+                
+                subdirs.append({
+                    "name": item,
+                    "path": item_path,
+                    "type": "directory",
+                    "is_dataset": is_dataset,
+                    "num_samples": num_samples,
+                    "num_normal": num_normal,
+                    "num_pneumonia": num_pneumonia
+                })
+            elif os.path.isfile(item_path):
+                files.append({
+                    "name": item,
+                    "path": item_path,
+                    "type": "file",
+                    "size": os.path.getsize(item_path)
+                })
+    except PermissionError:
+        raise HTTPException(
+            status_code=403,
+            detail=f"No permission to read directory: {directory}"
+        )
+    
+    # Get parent directory
+    parent_dir = os.path.dirname(directory) if directory != "/" else None
+    
+    return {
+        "current_directory": directory,
+        "parent_directory": parent_dir,
+        "subdirectories": subdirs,
+        "files": files,
+        "total_subdirs": len(subdirs),
+        "total_files": len(files)
+    }
+
+
+@app.post("/api/data/register")
+def register_dataset(
+    request: DatasetRegisterRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Register an existing dataset from filesystem.
+    
+    Instead of uploading, this registers a dataset that already exists
+    on the hospital system (on-premise data).
+    
+    Args:
+        request: DatasetRegisterRequest with path, name, and split
+    
+    Returns:
+        Dataset information
+    """
+    # Validate path exists
+    if not os.path.exists(request.path):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Dataset path not found: {request.path}"
+        )
+    
+    if not os.path.isdir(request.path):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Path is not a directory: {request.path}"
+        )
+    
+    # Validate dataset structure (must have split/NORMAL and split/PNEUMONIA folders)
+    # The path should be the base directory, and we check for {path}/{split}/NORMAL and {path}/{split}/PNEUMONIA
+    split_path = os.path.join(request.path, request.split)
+    
+    if not os.path.exists(split_path):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Split directory not found: {split_path}"
+        )
+    
+    normal_path = os.path.join(split_path, "NORMAL")
+    pneumonia_path = os.path.join(split_path, "PNEUMONIA")
+    
+    if not os.path.exists(normal_path):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Dataset must contain NORMAL folder at {normal_path}"
+        )
+    
+    if not os.path.exists(pneumonia_path):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Dataset must contain PNEUMONIA folder at {pneumonia_path}"
+        )
     
     # Count samples
-    normal_path = os.path.join(dataset_path, "NORMAL")
-    pneumonia_path = os.path.join(dataset_path, "PNEUMONIA")
-    
-    num_normal = len(os.listdir(normal_path)) if os.path.exists(normal_path) else 0
-    num_pneumonia = len(os.listdir(pneumonia_path)) if os.path.exists(pneumonia_path) else 0
+    num_normal = len([f for f in os.listdir(normal_path) if os.path.isfile(os.path.join(normal_path, f))])
+    num_pneumonia = len([f for f in os.listdir(pneumonia_path) if os.path.isfile(os.path.join(pneumonia_path, f))])
     num_samples = num_normal + num_pneumonia
+    
+    # Check if dataset already registered
+    existing = db.query(Dataset).filter(Dataset.path == request.path).first()
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Dataset already registered with ID: {existing.dataset_id}"
+        )
+    
+    # Generate dataset ID
+    dataset_id = f"dataset_{request.split}_{uuid.uuid4().hex[:8]}"
     
     # Save to database
     dataset = Dataset(
         dataset_id=dataset_id,
-        name=file.filename,
-        path=dataset_path,
-        split=split,
+        name=request.name,
+        path=request.path,
+        split=request.split,
         num_samples=num_samples,
         num_normal=num_normal,
         num_pneumonia=num_pneumonia
@@ -153,16 +283,19 @@ async def upload_dataset(
     
     return {
         "dataset_id": dataset_id,
-        "path": dataset_path,
+        "name": request.name,
+        "path": request.path,
+        "split": request.split,
         "num_samples": num_samples,
         "num_normal": num_normal,
-        "num_pneumonia": num_pneumonia
+        "num_pneumonia": num_pneumonia,
+        "created_at": dataset.created_at.isoformat()
     }
 
 
 @app.get("/api/data/list", response_model=List[DatasetInfo])
 def list_datasets(db: Session = Depends(get_db)):
-    """List all datasets."""
+    """List all registered datasets."""
     datasets = db.query(Dataset).all()
     return [
         {
@@ -172,10 +305,80 @@ def list_datasets(db: Session = Depends(get_db)):
             "num_samples": d.num_samples,
             "num_normal": d.num_normal,
             "num_pneumonia": d.num_pneumonia,
+            "is_active": bool(d.is_active),
             "created_at": d.created_at.isoformat()
         }
         for d in datasets
     ]
+
+
+@app.post("/api/data/set-active/{dataset_id}")
+def set_active_dataset(dataset_id: str, db: Session = Depends(get_db)):
+    """
+    Set a dataset as active for training.
+    
+    The active dataset will be used by default in training operations.
+    """
+    dataset = db.query(Dataset).filter(Dataset.dataset_id == dataset_id).first()
+    
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    
+    # Deactivate all other datasets
+    db.query(Dataset).update({"is_active": False})
+    
+    # Activate selected dataset
+    dataset.is_active = True
+    db.commit()
+    
+    return {
+        "status": "success",
+        "dataset_id": dataset_id,
+        "message": f"Dataset {dataset.name} set as active"
+    }
+
+
+@app.get("/api/data/active")
+def get_active_dataset(db: Session = Depends(get_db)):
+    """Get the currently active dataset."""
+    dataset = db.query(Dataset).filter(Dataset.is_active == True).first()
+    
+    if not dataset:
+        return {"active_dataset": None}
+    
+    return {
+        "active_dataset": {
+            "dataset_id": dataset.dataset_id,
+            "name": dataset.name,
+            "split": dataset.split,
+            "num_samples": dataset.num_samples,
+            "num_normal": dataset.num_normal,
+            "num_pneumonia": dataset.num_pneumonia,
+            "created_at": dataset.created_at.isoformat()
+        }
+    }
+
+
+@app.delete("/api/data/{dataset_id}")
+def delete_dataset(dataset_id: str, db: Session = Depends(get_db)):
+    """
+    Unregister a dataset.
+    
+    Note: This only removes the dataset from the registry,
+    it does NOT delete the actual files (on-premise data is preserved).
+    """
+    dataset = db.query(Dataset).filter(Dataset.dataset_id == dataset_id).first()
+    
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    
+    db.delete(dataset)
+    db.commit()
+    
+    return {
+        "status": "success",
+        "message": f"Dataset {dataset_id} unregistered (files preserved on system)"
+    }
 
 
 # ============================================================================
@@ -686,13 +889,19 @@ async def join_federated_round(
 async def start_federated_training(
     round_id: str,
     dataset_id: str,
-    background_tasks: BackgroundTasks,
+    model_name: str = "efficientnet_b0",
+    background_tasks: BackgroundTasks = None,
     db: Session = Depends(get_db)
 ):
     """
     Start federated training for a round.
     
     Creates a Celery task for FL training.
+    
+    Args:
+        round_id: FL round identifier
+        dataset_id: Dataset to use for training
+        model_name: Model architecture (resnet18, densenet121, efficientnet_b0)
     """
     from .tasks import federated_training_task
     
@@ -703,7 +912,7 @@ async def start_federated_training(
         job_id=job_id,
         job_type="federated_train",
         status="pending",
-        params={"round_id": round_id, "dataset_id": dataset_id}
+        params={"round_id": round_id, "dataset_id": dataset_id, "model_name": model_name}
     )
     db.add(job)
     db.commit()
@@ -712,7 +921,8 @@ async def start_federated_training(
     task = federated_training_task.delay(
         job_id=job_id,
         round_id=round_id,
-        dataset_id=dataset_id
+        dataset_id=dataset_id,
+        model_name=model_name
     )
     
     return {
@@ -797,6 +1007,20 @@ def get_federated_history(db: Session = Depends(get_db)):
             central_round_status = central_status.get("status", "")
             is_active = central_round_status in ["created", "training", "collecting"]
         
+        # Extract dataset info from job result or params
+        dataset_id = None
+        dataset_name = None
+        if latest_job and latest_job.result:
+            dataset_id = latest_job.result.get("dataset_id")
+            dataset_name = latest_job.result.get("dataset_name")
+        if not dataset_id and latest_job:
+            dataset_id = latest_job.params.get("dataset_id")
+        
+        # Extract metrics from job result
+        metrics = None
+        if latest_job and latest_job.result:
+            metrics = latest_job.result.get("metrics")
+        
         # Build round info
         round_info = {
             "round_id": round_id,
@@ -807,7 +1031,9 @@ def get_federated_history(db: Session = Depends(get_db)):
             "completed_at": latest_job.completed_at.isoformat() if latest_job and latest_job.completed_at else None,
             "model_id": model.model_id if model else None,
             "model_type": model.type if model else None,
-            "metrics": latest_job.result.get("metrics") if latest_job and latest_job.result else None,
+            "dataset_id": dataset_id,
+            "dataset_name": dataset_name,
+            "metrics": metrics,
             "central_status": central_status
         }
         
@@ -1043,6 +1269,33 @@ def get_job_logs_static(job_id: str, lines: int = 100, db: Session = Depends(get
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     
+    # Check if this is a federated training job with saved logs
+    log_file = Path(settings.STORAGE_ROOT) / "logs" / f"federated_train_{job_id}.log"
+    if job.job_type == "federated_train" and log_file.exists():
+        try:
+            # Read logs from file
+            with open(log_file, 'r') as f:
+                all_lines = f.readlines()
+            
+            # Get last N lines
+            log_lines = []
+            for line in all_lines[-lines:]:
+                log_lines.append({
+                    'timestamp': datetime.utcnow().isoformat(),
+                    'message': line.strip()
+                })
+            
+            return {
+                "job_id": job_id,
+                "status": job.status,
+                "total_lines": len(log_lines),
+                "logs": log_lines,
+                "source": "file"
+            }
+        except Exception as e:
+            # Fall through to Docker logs if file read fails
+            pass
+    
     import subprocess
     
     # Get worker container name
@@ -1073,7 +1326,8 @@ def get_job_logs_static(job_id: str, lines: int = 100, db: Session = Depends(get
             "job_id": job_id,
             "status": job.status,
             "total_lines": len(log_lines),
-            "logs": log_lines
+            "logs": log_lines,
+            "source": "docker"
         }
         
     except subprocess.TimeoutExpired:
