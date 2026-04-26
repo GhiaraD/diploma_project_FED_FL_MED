@@ -39,10 +39,13 @@ import {
   Visibility as VisibilityIcon,
 } from '@mui/icons-material';
 import Layout from '@/components/Layout';
+import ProtectedRoute from '@/components/ProtectedRoute';
+import { useAuth } from '@/contexts/AuthContext';
 
-const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
+const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8001';
 
 export default function InferencePage() {
+  const { token } = useAuth();
   const [currentDir, setCurrentDir] = useState('/storage/datasets');
   const [files, setFiles] = useState<any[]>([]);
   const [subdirs, setSubdirs] = useState<any[]>([]);
@@ -71,7 +74,12 @@ export default function InferencePage() {
       setError(null);
       
       const response = await fetch(
-        `${apiBase}/api/infer/browse?directory=${encodeURIComponent(directory)}`
+        `${apiBase}/api/infer/browse?directory=${encodeURIComponent(directory)}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+        }
       );
       
       if (!response.ok) {
@@ -92,15 +100,21 @@ export default function InferencePage() {
 
   // Load initial directory and history
   useEffect(() => {
-    browseDirectory(currentDir);
-    loadInferenceHistory();
-  }, []);
+    if (token) {
+      browseDirectory(currentDir);
+      loadInferenceHistory();
+    }
+  }, [token]);
 
   // Load inference history
   const loadInferenceHistory = async () => {
     try {
       setLoadingHistory(true);
-      const response = await fetch(`${apiBase}/api/jobs/list?job_type=infer&limit=100`);
+      const response = await fetch(`${apiBase}/api/jobs/list?job_type=infer&limit=100`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
       
       if (!response.ok) throw new Error('Failed to load history');
       
@@ -119,7 +133,11 @@ export default function InferencePage() {
       setLoading(true);
       setError(null);
       
-      const response = await fetch(`${apiBase}/api/infer/results/${historyJobId}`);
+      const response = await fetch(`${apiBase}/api/infer/results/${historyJobId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
       const data = await response.json();
       
       if (data.status === 'completed') {
@@ -160,7 +178,10 @@ export default function InferencePage() {
       // Start inference job
       const response = await fetch(`${apiBase}/api/infer`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
         body: JSON.stringify({
           image_paths: selectedPaths,
           generate_gradcam: true
@@ -196,7 +217,11 @@ export default function InferencePage() {
       try {
         attempts++;
         
-        const response = await fetch(`${apiBase}/api/infer/results/${jobId}`);
+        const response = await fetch(`${apiBase}/api/infer/results/${jobId}`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+        });
         const data = await response.json();
         
         if (data.status === 'completed') {
@@ -264,7 +289,8 @@ export default function InferencePage() {
   };
 
   return (
-    <Layout title="Inference">
+    <ProtectedRoute>
+      <Layout title="Inference">
       <Container maxWidth="xl">
         <Typography variant="h4" gutterBottom>
           Inference & Grad-CAM
@@ -670,5 +696,6 @@ export default function InferencePage() {
         </Paper>
       </Container>
     </Layout>
+    </ProtectedRoute>
   );
 }

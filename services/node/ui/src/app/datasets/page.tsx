@@ -42,6 +42,8 @@ import {
   Add as AddIcon,
 } from '@mui/icons-material';
 import Layout from '@/components/Layout';
+import ProtectedRoute from '@/components/ProtectedRoute';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface Dataset {
   dataset_id: string;
@@ -77,6 +79,7 @@ export default function DatasetsPage() {
   const [error, setError] = useState<string | null>(null);
   const [browseDialogOpen, setBrowseDialogOpen] = useState(false);
   const [registering, setRegistering] = useState(false);
+  const { token } = useAuth();
   
   // Browse state
   const [currentDirectory, setCurrentDirectory] = useState<string>('');
@@ -87,14 +90,20 @@ export default function DatasetsPage() {
   const [split, setSplit] = useState('train');
 
   useEffect(() => {
-    fetchDatasets();
-  }, []);
+    if (token) {
+      fetchDatasets();
+    }
+  }, [token]);
 
   const fetchDatasets = async () => {
     try {
       setLoading(true);
-      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
-      const response = await fetch(`${apiBase}/api/data/list`);
+      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8001';
+      const response = await fetch(`${apiBase}/api/data/list`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
       if (!response.ok) throw new Error('Failed to fetch datasets');
       const data = await response.json();
       setDatasets(data);
@@ -109,12 +118,16 @@ export default function DatasetsPage() {
   const browseDirectory = async (path?: string) => {
     try {
       setBrowsing(true);
-      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
+      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8001';
       const url = path 
         ? `${apiBase}/api/data/browse?directory=${encodeURIComponent(path)}`
         : `${apiBase}/api/data/browse`;
       
-      const response = await fetch(url);
+      const response = await fetch(url, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
       if (!response.ok) throw new Error('Failed to browse directory');
       const data = await response.json();
       setBrowseData(data);
@@ -143,10 +156,13 @@ export default function DatasetsPage() {
 
     try {
       setRegistering(true);
-      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
+      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8001';
       const response = await fetch(`${apiBase}/api/data/register`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
         body: JSON.stringify({
           path: selectedPath,
           name: datasetName,
@@ -172,9 +188,12 @@ export default function DatasetsPage() {
 
   const handleSetActive = async (datasetId: string) => {
     try {
-      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
+      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8001';
       const response = await fetch(`${apiBase}/api/data/set-active/${datasetId}`, {
         method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
       });
 
       if (!response.ok) throw new Error('Failed to set active dataset');
@@ -189,9 +208,12 @@ export default function DatasetsPage() {
     if (!confirm('Unregister this dataset? (Files will be preserved on system)')) return;
 
     try {
-      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
+      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8001';
       const response = await fetch(`${apiBase}/api/data/${datasetId}`, {
         method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
       });
 
       if (!response.ok) throw new Error('Failed to delete dataset');
@@ -205,7 +227,8 @@ export default function DatasetsPage() {
   const activeDataset = datasets.find(d => d.is_active);
 
   return (
-    <Layout title="Datasets">
+    <ProtectedRoute>
+      <Layout title="Datasets">
       <Container maxWidth="lg">
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
           <Typography variant="h4">
@@ -478,5 +501,6 @@ export default function DatasetsPage() {
         </Dialog>
       </Container>
     </Layout>
+    </ProtectedRoute>
   );
 }

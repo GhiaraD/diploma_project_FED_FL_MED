@@ -214,9 +214,16 @@ def train_model(
     best_val_acc = 0.0
     best_model_state = None
     
+    if verbose:
+        print(f"\n{'='*60}")
+        print(f"Starting Training: {num_epochs} epochs")
+        print(f"{'='*60}")
+    
     for epoch in range(num_epochs):
         if verbose:
-            print(f"\nEpoch {epoch + 1}/{num_epochs}")
+            print(f"\n{'─'*60}")
+            print(f"📚 Epoch {epoch + 1}/{num_epochs}")
+            print(f"{'─'*60}")
         
         # Train
         train_loss, train_acc = train_epoch(
@@ -234,11 +241,13 @@ def train_model(
         history['epochs_trained'] = epoch + 1
         
         if verbose:
-            print(f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f}")
-            print(f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}")
+            print(f"  📊 Train → Loss: {train_loss:.4f} | Accuracy: {train_acc:.2%}")
+            print(f"  📈 Val   → Loss: {val_loss:.4f} | Accuracy: {val_acc:.2%}")
         
         # Save best model
         if val_acc > best_val_acc:
+            if verbose and best_val_acc > 0:
+                print(f"  ⭐ New best accuracy: {val_acc:.2%} (previous: {best_val_acc:.2%})")
             best_val_acc = val_acc
             best_model_state = model.state_dict().copy()
         
@@ -246,7 +255,7 @@ def train_model(
         if early_stopping is not None:
             if early_stopping(val_acc):
                 if verbose:
-                    print(f"Early stopping triggered at epoch {epoch + 1}")
+                    print(f"\n⚠️  Early stopping triggered at epoch {epoch + 1}")
                 break
     
     # Restore best model
@@ -254,6 +263,15 @@ def train_model(
         model.load_state_dict(best_model_state)
     
     history['best_val_acc'] = best_val_acc
+    
+    if verbose:
+        print(f"\n{'='*60}")
+        print(f"✅ Training Complete!")
+        print(f"  • Epochs trained: {history['epochs_trained']}")
+        print(f"  • Best validation accuracy: {best_val_acc:.2%}")
+        print(f"  • Final train loss: {history['train_loss'][-1]:.4f}")
+        print(f"  • Final val loss: {history['val_loss'][-1]:.4f}")
+        print(f"{'='*60}\n")
     
     return history
 

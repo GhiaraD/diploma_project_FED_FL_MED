@@ -96,9 +96,10 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
         if config_list:
             updated_config_list = []
             for client, fit_ins in config_list:
-                # Merge existing config with hyperparameters
+                # Merge existing config with hyperparameters and server_round
                 new_config = {
                     **fit_ins.config,
+                    "server_round": server_round,  # Add round number
                     "num_epochs": self.num_epochs,
                     "learning_rate": self.learning_rate,
                     "optimizer": self.optimizer,
@@ -151,22 +152,32 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
         self.current_round = server_round
         
         print(f"\n{'='*70}")
-        print(f"[FedMedStrategy] Round {server_round}: Aggregating {len(results)} clients")
+        print(f"🔄 FEDERATED ROUND {server_round} - AGGREGATION")
         print(f"{'='*70}")
+        print(f"  📥 Received results from {len(results)} client(s)")
+        
+        if failures:
+            print(f"  ⚠️  {len(failures)} client(s) failed")
         
         if not results:
-            print("[FedMedStrategy] ✗ No results to aggregate")
+            print("  ✗ No results to aggregate")
+            print(f"{'='*70}\n")
             return None, {}
         
         # Log client metrics before aggregation
-        for client, fit_res in results:
+        print(f"\n  📊 Client Results:")
+        for i, (client, fit_res) in enumerate(results, 1):
             metrics = fit_res.metrics
             num_samples = fit_res.num_examples
-            print(f"[FedMedStrategy] Client {client.cid}:")
-            print(f"  - Samples: {num_samples}")
-            print(f"  - Metrics: {metrics}")
+            acc = metrics.get('accuracy', 0)
+            print(f"    {i}. Client {client.cid}:")
+            print(f"       • Samples: {num_samples}")
+            print(f"       • Accuracy: {acc:.2%}")
+            print(f"       • Train Loss: {metrics.get('train_loss', 0):.4f}")
+            print(f"       • Val Loss: {metrics.get('val_loss', 0):.4f}")
         
         # Call parent FedAvg aggregation
+        print(f"\n  🔄 Aggregating parameters...")
         aggregated_parameters, aggregated_metrics = super().aggregate_fit(
             server_round, results, failures
         )
@@ -178,9 +189,20 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
                 self._save_global_model(parameters_list, server_round)
             
             # Log aggregated metrics
-            print(f"\n[FedMedStrategy] ✓ Round {server_round} aggregation complete")
+            print(f"\n{'='*70}")
+            print(f"✅ ROUND {server_round} COMPLETE")
+            print(f"{'='*70}")
             if aggregated_metrics:
-                print(f"[FedMedStrategy] Aggregated metrics: {aggregated_metrics}")
+                print(f"  📈 Aggregated Metrics:")
+                for key, value in aggregated_metrics.items():
+                    if isinstance(value, float):
+                        if 'acc' in key.lower():
+                            print(f"    • {key}: {value:.2%}")
+                        else:
+                            print(f"    • {key}: {value:.4f}")
+                    else:
+                        print(f"    • {key}: {value}")
+            print(f"{'='*70}\n")
             
             # Store round history
             self.round_history.append({

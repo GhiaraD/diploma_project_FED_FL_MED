@@ -34,6 +34,8 @@ import {
   PlayCircle as RunningIcon,
 } from '@mui/icons-material';
 import Layout from '@/components/Layout';
+import ProtectedRoute from '@/components/ProtectedRoute';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface TrainingRound {
   round_id: string;
@@ -58,18 +60,25 @@ export default function FederatedPage() {
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [selectedRound, setSelectedRound] = useState<TrainingRound | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const { token } = useAuth();
 
   useEffect(() => {
-    fetchTrainingHistory();
-    const interval = setInterval(fetchTrainingHistory, 10000); // Refresh every 10s
-    return () => clearInterval(interval);
-  }, []);
+    if (token) {
+      fetchTrainingHistory();
+      const interval = setInterval(fetchTrainingHistory, 10000); // Refresh every 10s
+      return () => clearInterval(interval);
+    }
+  }, [token]);
 
   const fetchTrainingHistory = async () => {
     try {
       setLoading(true);
-      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
-      const response = await fetch(`${apiBase}/api/federated/history`);
+      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8001';
+      const response = await fetch(`${apiBase}/api/federated/history`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
       if (!response.ok) throw new Error('Failed to fetch training history');
       const data = await response.json();
       setRounds(data.rounds || []);
@@ -157,7 +166,8 @@ export default function FederatedPage() {
   );
 
   return (
-    <Layout title="Federated Learning">
+    <ProtectedRoute>
+      <Layout title="Federated Learning">
       <Container maxWidth="xl">
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
           <Typography variant="h4">
@@ -615,5 +625,6 @@ export default function FederatedPage() {
         )}
       </Container>
     </Layout>
+    </ProtectedRoute>
   );
 }

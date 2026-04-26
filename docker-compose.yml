@@ -41,6 +41,16 @@ services:
       REDIS_URL: redis://node1-redis:6379/0
       DEVICE: cuda
       TZ: ${TZ:-UTC}
+      # Security configuration
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-fed-med-fl-secret-key-2026-change-in-production}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-1440}  # 24 hours
+      REDIS_HOST: node1-redis
+      REDIS_PORT: 6379
+      REDIS_SECURITY_DB: 1
+      RATE_LIMIT_ENABLED: "true"
+      API_KEY_EXPIRE_DAYS: 365
+      AUDIT_LOG_LEVEL: INFO
+      AUDIT_LOG_RETENTION_DAYS: 2555
     volumes:
       - ./storage/node1:/storage
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -114,6 +124,16 @@ services:
       REDIS_URL: redis://node2-redis:6379/0
       DEVICE: cuda
       TZ: ${TZ:-UTC}
+      # Security configuration
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-fed-med-fl-secret-key-2026-change-in-production}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-1440}  # 24 hours
+      REDIS_HOST: node2-redis
+      REDIS_PORT: 6379
+      REDIS_SECURITY_DB: 1
+      RATE_LIMIT_ENABLED: "true"
+      API_KEY_EXPIRE_DAYS: 365
+      AUDIT_LOG_LEVEL: INFO
+      AUDIT_LOG_RETENTION_DAYS: 2555
     volumes:
       - ./storage/node2:/storage
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -187,6 +207,16 @@ services:
       REDIS_URL: redis://node3-redis:6379/0
       DEVICE: cuda
       TZ: ${TZ:-UTC}
+      # Security configuration
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-fed-med-fl-secret-key-2026-change-in-production}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-1440}  # 24 hours
+      REDIS_HOST: node3-redis
+      REDIS_PORT: 6379
+      REDIS_SECURITY_DB: 1
+      RATE_LIMIT_ENABLED: "true"
+      API_KEY_EXPIRE_DAYS: 365
+      AUDIT_LOG_LEVEL: INFO
+      AUDIT_LOG_RETENTION_DAYS: 2555
     volumes:
       - ./storage/node3:/storage
       - /var/run/docker.sock:/var/run/docker.sock:ro

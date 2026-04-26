@@ -1,10 +1,11 @@
 """
 Database models and session management.
 """
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text, JSON
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text, JSON, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
+import uuid
 from .config import settings
 
 def get_local_now():
@@ -13,6 +14,10 @@ def get_local_now():
     Automatically detects the timezone from the system.
     """
     return datetime.now().astimezone()
+
+def generate_uuid():
+    """Generate UUID for primary keys."""
+    return str(uuid.uuid4())
 
 # Create engine
 engine = create_engine(
@@ -26,6 +31,78 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 # Base class for models
 Base = declarative_base()
 
+
+# ============================================================================
+# Security Models
+# ============================================================================
+
+class User(Base):
+    """User authentication and authorization table."""
+    __tablename__ = "users"
+    
+    id = Column(String, primary_key=True, default=generate_uuid)
+    email = Column(String, unique=True, index=True, nullable=False)
+    password_hash = Column(String, nullable=False)
+    role = Column(String, nullable=False, index=True)  # admin, doctor, researcher, viewer
+    node_id = Column(String, nullable=False, index=True)  # node1, node2, node3
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=get_local_now, nullable=False)
+    last_login = Column(DateTime, nullable=True)
+    failed_login_attempts = Column(Integer, default=0, nullable=False)
+    locked_until = Column(DateTime, nullable=True)
+    password_changed_at = Column(DateTime, default=get_local_now, nullable=False)
+
+
+class ApiKey(Base):
+    """API keys for inter-node communication."""
+    __tablename__ = "api_keys"
+    
+    id = Column(String, primary_key=True, default=generate_uuid)
+    key_hash = Column(String, unique=True, nullable=False, index=True)  # SHA256 hash of the key
+    node_id = Column(String, nullable=False, index=True)  # Source node ID
+    permissions = Column(Text, nullable=False)  # JSON array of permissions
+    expires_at = Column(DateTime, nullable=False, index=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=get_local_now, nullable=False)
+    last_used = Column(DateTime, nullable=True)
+    created_by = Column(String, nullable=True)  # User ID who created the key
+
+
+class AuditLog(Base):
+    """Security audit logging table."""
+    __tablename__ = "audit_logs"
+    
+    id = Column(String, primary_key=True, default=generate_uuid)
+    timestamp = Column(DateTime, default=get_local_now, nullable=False, index=True)
+    event_type = Column(String, nullable=False, index=True)  # login, api_request, data_access, etc.
+    user_id = Column(String, nullable=True, index=True)  # User who performed the action
+    node_id = Column(String, nullable=False, index=True)  # Node where action occurred
+    endpoint = Column(String, nullable=True)  # API endpoint accessed
+    ip_address = Column(String, nullable=True)
+    user_agent = Column(String, nullable=True)
+    request_id = Column(String, nullable=True, index=True)
+    response_status = Column(Integer, nullable=True)
+    duration_ms = Column(Integer, nullable=True)
+    details = Column(Text, nullable=True)  # JSON with additional details
+
+
+class Session(Base):
+    """Active user sessions for JWT management."""
+    __tablename__ = "sessions"
+    
+    jti = Column(String, primary_key=True)  # JWT ID
+    user_id = Column(String, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    is_revoked = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, default=get_local_now, nullable=False)
+    revoked_at = Column(DateTime, nullable=True)
+    ip_address = Column(String, nullable=True)
+    user_agent = Column(String, nullable=True)
+
+
+# ============================================================================
+# Existing Application Models
+# ============================================================================
 
 class Model(Base):
     """Model registry table."""

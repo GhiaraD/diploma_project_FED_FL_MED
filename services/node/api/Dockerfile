@@ -30,7 +30,11 @@ RUN pip install --no-cache-dir \
     sqlalchemy==2.0.23 \
     celery==5.3.4 \
     redis==5.0.1 \
-    python-multipart==0.0.6
+    python-multipart==0.0.6 \
+    python-jose[cryptography]==3.3.0 \
+    bcrypt==4.0.1 \
+    pydantic==2.4.2 \
+    email-validator==2.1.0
 
 # Copy API code
 COPY services/node/api/app /app/app

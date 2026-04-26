@@ -16,6 +16,8 @@ import {
 } from '@mui/material';
 import { PlayArrow as PlayArrowIcon } from '@mui/icons-material';
 import Layout from '@/components/Layout';
+import ProtectedRoute from '@/components/ProtectedRoute';
+import { useAuth } from '@/contexts/AuthContext';
 
 export default function TrainPage() {
   const [datasets, setDatasets] = useState<any[]>([]);
@@ -28,15 +30,22 @@ export default function TrainPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
+  const { token } = useAuth();
 
   useEffect(() => {
-    fetchDatasets();
-  }, []);
+    if (token) {
+      fetchDatasets();
+    }
+  }, [token]);
 
   const fetchDatasets = async () => {
     try {
-      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
-      const response = await fetch(`${apiBase}/api/data/list`);
+      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8001';
+      const response = await fetch(`${apiBase}/api/data/list`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
       if (!response.ok) return;
       const data = await response.json();
       setDatasets(data);
@@ -54,10 +63,13 @@ export default function TrainPage() {
     try {
       setLoading(true);
       setError(null);
-      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
+      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8001';
       const response = await fetch(`${apiBase}/api/train/local`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
         body: JSON.stringify({
           dataset_id: datasetId,
           model_name: modelName,
@@ -80,7 +92,8 @@ export default function TrainPage() {
   };
 
   return (
-    <Layout title="Train">
+    <ProtectedRoute>
+      <Layout title="Train">
       <Container maxWidth="lg">
         <Typography variant="h4" gutterBottom>
           Local Training
@@ -229,5 +242,6 @@ export default function TrainPage() {
         </Grid>
       </Container>
     </Layout>
+    </ProtectedRoute>
   );
 }

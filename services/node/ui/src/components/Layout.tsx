@@ -11,6 +11,11 @@ import {
   ListItemButton,
   ListItemIcon,
   ListItemText,
+  IconButton,
+  Menu,
+  MenuItem,
+  Divider,
+  Avatar,
 } from '@mui/material';
 import {
   Dashboard as DashboardIcon,
@@ -20,9 +25,16 @@ import {
   Hub as HubIcon,
   Storage as StorageIcon,
   Work as WorkIcon,
+  Security as SecurityIcon,
+  AccountCircle,
+  Logout as LogoutIcon,
 } from '@mui/icons-material';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
+import { useAuth } from '@/contexts/AuthContext';
+import { useApiInterceptor } from '@/hooks/useApiInterceptor';
+import TokenExpirationWarning from './TokenExpirationWarning';
+import { useState } from 'react';
 
 const drawerWidth = 240;
 
@@ -33,6 +45,7 @@ const menuItems = [
   { text: 'Models', icon: <StorageIcon />, href: '/models' },
   { text: 'Inference', icon: <PsychologyIcon />, href: '/inference' },
   { text: 'Jobs', icon: <WorkIcon />, href: '/jobs' },
+  { text: 'Audit', icon: <SecurityIcon />, href: '/audit' },
 ];
 
 interface LayoutProps {
@@ -43,15 +56,97 @@ interface LayoutProps {
 
 export default function Layout({ children, title = 'Node Portal', nodeId }: LayoutProps) {
   const pathname = usePathname();
+  const router = useRouter();
+  const { user, logout } = useAuth();
+  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+
+  // Use API interceptor for automatic token expiration handling
+  useApiInterceptor();
+
+  const handleMenu = (event: React.MouseEvent<HTMLElement>) => {
+    setAnchorEl(event.currentTarget);
+  };
+
+  const handleClose = () => {
+    setAnchorEl(null);
+  };
+
+  const handleLogout = async () => {
+    handleClose();
+    await logout();
+    router.push('/login');
+  };
 
   return (
     <Box sx={{ display: 'flex' }}>
+      {/* Token Expiration Warning */}
+      <TokenExpirationWarning />
+      
       {/* AppBar */}
       <AppBar position="fixed" sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}>
         <Toolbar>
-          <Typography variant="h6" noWrap component="div">
+          <Typography variant="h6" noWrap component="div" sx={{ flexGrow: 1 }}>
             Fed-Med-FL - {nodeId || title}
           </Typography>
+
+          {/* User Menu */}
+          {user && (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+              <Box sx={{ textAlign: 'right', display: { xs: 'none', sm: 'block' } }}>
+                <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                  {user.email}
+                </Typography>
+                <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.7)' }}>
+                  {user.role.toUpperCase()} • {user.node_id.toUpperCase()}
+                </Typography>
+              </Box>
+              <IconButton
+                size="large"
+                aria-label="account of current user"
+                aria-controls="menu-appbar"
+                aria-haspopup="true"
+                onClick={handleMenu}
+                color="inherit"
+              >
+                <Avatar sx={{ width: 32, height: 32, bgcolor: 'secondary.main' }}>
+                  {user.email.charAt(0).toUpperCase()}
+                </Avatar>
+              </IconButton>
+              <Menu
+                id="menu-appbar"
+                anchorEl={anchorEl}
+                anchorOrigin={{
+                  vertical: 'bottom',
+                  horizontal: 'right',
+                }}
+                keepMounted
+                transformOrigin={{
+                  vertical: 'top',
+                  horizontal: 'right',
+                }}
+                open={Boolean(anchorEl)}
+                onClose={handleClose}
+              >
+                <MenuItem disabled>
+                  <Box>
+                    <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                      {user.email}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Role: {user.role}
+                    </Typography>
+                  </Box>
+                </MenuItem>
+                <Divider />
+                <MenuItem onClick={handleLogout}>
+                  <ListItemIcon>
+                    <LogoutIcon fontSize="small" />
+                  </ListItemIcon>
+                  Logout
+                </MenuItem>
+              </Menu>
+            </Box>
+          )}
         </Toolbar>
       </AppBar>
 

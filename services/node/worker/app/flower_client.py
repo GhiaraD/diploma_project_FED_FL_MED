@@ -153,23 +153,29 @@ class FedMedClient(fl.client.NumPyClient):
         """
         global _last_training_metrics, _trained_model
         
-        print(f"\n[{self.node_id}] {'='*50}")
-        print(f"[{self.node_id}] Starting local training...")
-        print(f"[{self.node_id}] {'='*50}")
+        # Get current round from config
+        current_round = config.get("server_round", "?")
+        
+        print(f"\n{'='*70}")
+        print(f"[{self.node_id}] 🔄 FEDERATED LEARNING ROUND {current_round}")
+        print(f"{'='*70}")
         
         # Set global parameters
         self.set_parameters(parameters)
+        print(f"[{self.node_id}] ✓ Received global model parameters from server")
         
         # Get hyperparameters from config
         num_epochs = config.get("num_epochs", 5)
         learning_rate = config.get("learning_rate", 0.001)
         optimizer_name = config.get("optimizer", "adam")
         
-        print(f"[{self.node_id}] Hyperparameters:")
-        print(f"  - Epochs: {num_epochs}")
-        print(f"  - Learning rate: {learning_rate}")
-        print(f"  - Optimizer: {optimizer_name}")
-        print(f"  - Batch size: {self.batch_size}")
+        print(f"[{self.node_id}] 📋 Training Configuration:")
+        print(f"  • Epochs: {num_epochs}")
+        print(f"  • Learning rate: {learning_rate}")
+        print(f"  • Optimizer: {optimizer_name}")
+        print(f"  • Batch size: {self.batch_size}")
+        print(f"  • Training samples: {len(self.train_loader.dataset)}")
+        print(f"  • Validation samples: {len(self.val_loader.dataset)}")
         
         # Setup training
         criterion = torch.nn.CrossEntropyLoss()
@@ -206,11 +212,15 @@ class FedMedClient(fl.client.NumPyClient):
         _last_training_metrics = metrics
         _trained_model = self.model
         
-        print(f"\n[{self.node_id}] ✓ Training complete:")
-        print(f"  - Best accuracy: {metrics['accuracy']:.4f}")
-        print(f"  - Final train loss: {metrics['train_loss']:.4f}")
-        print(f"  - Final val loss: {metrics['val_loss']:.4f}")
-        print(f"[{self.node_id}] {'='*50}\n")
+        print(f"\n{'='*70}")
+        print(f"[{self.node_id}] ✅ ROUND {current_round} COMPLETE")
+        print(f"{'='*70}")
+        print(f"  📊 Results:")
+        print(f"    • Best accuracy: {metrics['accuracy']:.2%}")
+        print(f"    • Final train loss: {metrics['train_loss']:.4f}")
+        print(f"    • Final val loss: {metrics['val_loss']:.4f}")
+        print(f"  📤 Sending updated parameters to server...")
+        print(f"{'='*70}\n")
         
         return updated_parameters, num_samples, metrics
     

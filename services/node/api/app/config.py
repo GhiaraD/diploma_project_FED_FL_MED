@@ -34,6 +34,27 @@ class Settings:
     CELERY_BROKER_URL: str = REDIS_URL
     CELERY_RESULT_BACKEND: str = REDIS_URL
     
+    # Security settings
+    JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "fed-med-fl-secret-key-2026-change-in-production")
+    JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))  # 24 hours
+    
+    # Redis for security (sessions, rate limiting)
+    REDIS_HOST: str = os.getenv("REDIS_HOST", f"{NODE_ID}-redis")
+    REDIS_PORT: int = int(os.getenv("REDIS_PORT", "6379"))
+    REDIS_SECURITY_DB: int = int(os.getenv("REDIS_SECURITY_DB", "1"))
+    
+    # Rate limiting
+    RATE_LIMIT_ENABLED: bool = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"
+    
+    # API Keys
+    API_KEY_EXPIRE_DAYS: int = int(os.getenv("API_KEY_EXPIRE_DAYS", "365"))
+    INTER_NODE_API_KEY: str = os.getenv("INTER_NODE_API_KEY", "")
+    
+    # Audit logging
+    AUDIT_LOG_LEVEL: str = os.getenv("AUDIT_LOG_LEVEL", "INFO")
+    AUDIT_LOG_RETENTION_DAYS: int = int(os.getenv("AUDIT_LOG_RETENTION_DAYS", "2555"))  # 7 years
+    
     # Central server
     CENTRAL_URL: str = os.getenv("CENTRAL_URL", "http://central:8081")
     FLOWER_SERVER: str = os.getenv("FLOWER_SERVER", "central:8080")

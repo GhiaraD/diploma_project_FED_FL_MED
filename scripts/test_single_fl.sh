@@ -70,24 +70,37 @@ echo ""
 echo -e "${BLUE}Monitoring training (max 5 minutes)...${NC}"
 MAX_WAIT=300
 ELAPSED=0
+
 while [ $ELAPSED -lt $MAX_WAIT ]; do
-    JOB1_STATUS=$(curl -s "${NODE1_URL}/api/train/status/${JOB1_ID}" 2>/dev/null | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
-    JOB2_STATUS=$(curl -s "${NODE2_URL}/api/train/status/${JOB2_ID}" 2>/dev/null | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
+    JOB1_STATUS=$(curl -s "${NODE1_URL}/api/train/status/${JOB1_ID}" 2>/dev/null | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4 | tr -d '\n\r ')
+    JOB2_STATUS=$(curl -s "${NODE2_URL}/api/train/status/${JOB2_ID}" 2>/dev/null | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4 | tr -d '\n\r ')
     
     JOB1_STATUS=${JOB1_STATUS:-unknown}
     JOB2_STATUS=${JOB2_STATUS:-unknown}
     
-    echo "  [${ELAPSED}s] Node1: ${JOB1_STATUS} | Node2: ${JOB2_STATUS}"
+    # Only print every 30 seconds to reduce spam
+    if [ $((ELAPSED % 30)) -eq 0 ] || [ "$ELAPSED" -eq 0 ]; then
+        echo "  [${ELAPSED}s] Node1: ${JOB1_STATUS} | Node2: ${JOB2_STATUS}"
+    fi
     
+    # Check for completion
     if [ "$JOB1_STATUS" = "completed" ] && [ "$JOB2_STATUS" = "completed" ]; then
         echo ""
         echo -e "${GREEN}✓ Training completed!${NC}"
         break
     fi
     
+    # Check for failure
     if [ "$JOB1_STATUS" = "failed" ] || [ "$JOB2_STATUS" = "failed" ]; then
         echo ""
         echo -e "${RED}✗ Training failed${NC}"
+        exit 1
+    fi
+    
+    # Check for timeout before sleeping
+    if [ $ELAPSED -ge $MAX_WAIT ]; then
+        echo ""
+        echo -e "${RED}✗ Timeout after ${MAX_WAIT} seconds${NC}"
         exit 1
     fi
     
@@ -95,10 +108,6 @@ while [ $ELAPSED -lt $MAX_WAIT ]; do
     ELAPSED=$((ELAPSED + 10))
 done
 
-if [ $ELAPSED -ge $MAX_WAIT ]; then
-    echo -e "${RED}✗ Timeout${NC}"
-    exit 1
-fi
 
 echo ""
 

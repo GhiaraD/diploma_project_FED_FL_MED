@@ -23,6 +23,8 @@ import {
   CheckCircle as CheckCircleIcon,
 } from '@mui/icons-material';
 import Layout from '@/components/Layout';
+import ProtectedRoute from '@/components/ProtectedRoute';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface Model {
   model_id: string;
@@ -40,16 +42,23 @@ export default function ModelsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [promoting, setPromoting] = useState<string | null>(null);
+  const { token } = useAuth();
 
   useEffect(() => {
-    fetchModels();
-  }, []);
+    if (token) {
+      fetchModels();
+    }
+  }, [token]);
 
   const fetchModels = async () => {
     try {
       setLoading(true);
-      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
-      const response = await fetch(`${apiBase}/api/models/registry`);
+      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8001';
+      const response = await fetch(`${apiBase}/api/models/registry`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
       if (!response.ok) throw new Error('Failed to fetch models');
       const data = await response.json();
       
@@ -70,10 +79,13 @@ export default function ModelsPage() {
   const handlePromote = async (modelId: string) => {
     try {
       setPromoting(modelId);
-      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
+      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8001';
       const response = await fetch(`${apiBase}/api/models/promote`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
         body: JSON.stringify({ model_id: modelId }),
       });
 
@@ -104,7 +116,8 @@ export default function ModelsPage() {
   const activeModel = models.find(m => m.labels?.includes('active'));
 
   return (
-    <Layout title="Models">
+    <ProtectedRoute>
+      <Layout title="Models">
       <Container maxWidth="lg">
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
           <Typography variant="h4">
@@ -318,5 +331,6 @@ export default function ModelsPage() {
         </Paper>
       </Container>
     </Layout>
+    </ProtectedRoute>
   );
 }

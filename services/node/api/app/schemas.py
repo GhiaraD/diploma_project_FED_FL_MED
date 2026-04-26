@@ -1,9 +1,128 @@
 """
 Pydantic schemas for request/response validation.
 """
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional, Dict, Any
 from datetime import datetime
+
+
+# ============================================================================
+# Authentication & Authorization
+# ============================================================================
+
+class UserCreate(BaseModel):
+    email: EmailStr
+    password: str = Field(..., min_length=12, description="Password must be at least 12 characters")
+    role: str = Field(..., pattern="^(admin|doctor|researcher|viewer)$")
+    node_id: str = Field(..., pattern="^(node1|node2|node3|central)$")
+
+
+class UserResponse(BaseModel):
+    id: str
+    email: str
+    role: str
+    node_id: str
+    is_active: bool
+    created_at: datetime
+    last_login: Optional[datetime]
+    
+    class Config:
+        from_attributes = True
+
+
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int = 1800  # 30 minutes in seconds
+    user: Optional[UserResponse] = None
+
+
+class TokenData(BaseModel):
+    user_id: Optional[str] = None
+    email: Optional[str] = None
+    role: Optional[str] = None
+    node_id: Optional[str] = None
+    permissions: List[str] = []
+
+
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str = Field(..., min_length=12)
+
+
+class ApiKeyCreate(BaseModel):
+    node_id: str = Field(..., pattern="^(node1|node2|node3|central)$")
+    permissions: List[str]
+    expires_days: int = Field(default=365, ge=1, le=3650)  # 1 day to 10 years
+    description: Optional[str] = None
+
+
+class ApiKeyResponse(BaseModel):
+    id: str
+    node_id: str
+    permissions: List[str]
+    expires_at: datetime
+    is_active: bool
+    created_at: datetime
+    last_used: Optional[datetime]
+    # Note: We never return the actual key after creation
+    
+    class Config:
+        from_attributes = True
+
+
+class ApiKeyCreateResponse(BaseModel):
+    """Response when creating a new API key - includes the actual key."""
+    api_key: str  # The actual key - only shown once!
+    key_info: ApiKeyResponse
+
+
+class AuditLogResponse(BaseModel):
+    id: str
+    timestamp: datetime
+    event_type: str
+    user_id: Optional[str]
+    node_id: str
+    endpoint: Optional[str]
+    ip_address: Optional[str]
+    response_status: Optional[int]
+    duration_ms: Optional[int]
+    details: Optional[Dict[str, Any]]
+    
+    @classmethod
+    def from_orm(cls, obj):
+        """Custom from_orm to handle JSON string in details field."""
+        import json
+        data = {
+            'id': obj.id,
+            'timestamp': obj.timestamp,
+            'event_type': obj.event_type,
+            'user_id': obj.user_id,
+            'node_id': obj.node_id,
+            'endpoint': obj.endpoint,
+            'ip_address': obj.ip_address,
+            'response_status': obj.response_status,
+            'duration_ms': obj.duration_ms,
+            'details': json.loads(obj.details) if obj.details and isinstance(obj.details, str) else obj.details
+        }
+        return cls.model_validate(data)
+    
+    model_config = {"from_attributes": True}
+
+
+class SecurityMetrics(BaseModel):
+    """Security metrics for monitoring dashboard."""
+    authentication: Dict[str, int]
+    authorization: Dict[str, int]
+    rate_limiting: Dict[str, int]
+    audit: Dict[str, int]
+    active_sessions: int
+    failed_logins_last_hour: int
 
 
 # ============================================================================

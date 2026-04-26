@@ -17,38 +17,53 @@ import {
   Hub as HubIcon,
   Storage as StorageIcon,
   Work as WorkIcon,
+  Security as SecurityIcon,
 } from '@mui/icons-material';
 import Link from 'next/link';
 import Layout from '@/components/Layout';
+import ProtectedRoute from '@/components/ProtectedRoute';
+import { useAuth } from '@/contexts/AuthContext';
 
 export default function DashboardPage() {
   const [nodeStatus, setNodeStatus] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { token } = useAuth();
 
   useEffect(() => {
-    fetchNodeStatus();
-    const interval = setInterval(fetchNodeStatus, 10000); // Refresh every 10s
-    return () => clearInterval(interval);
-  }, []);
+    if (token) {
+      fetchNodeStatus();
+      const interval = setInterval(fetchNodeStatus, 10000); // Refresh every 10s
+      return () => clearInterval(interval);
+    }
+  }, [token]);
 
   const fetchNodeStatus = async () => {
     try {
-      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
-      const response = await fetch(`${apiBase}/api/node/status`);
-      if (!response.ok) throw new Error('Failed to fetch node status');
+      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8001';
+      const response = await fetch(`${apiBase}/api/node/status`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch node status');
+      }
+      
       const data = await response.json();
       setNodeStatus(data);
       setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
+    } catch (err: any) {
+      setError(err.message);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <Layout title="Dashboard" nodeId={nodeStatus?.node_id}>
+    <ProtectedRoute>
+      <Layout nodeId={nodeStatus?.node_id}>
       <Container maxWidth="lg">
           <Typography variant="h4" gutterBottom>
             Dashboard
@@ -250,11 +265,24 @@ export default function DashboardPage() {
                       </Card>
                     </Link>
                   </Grid>
+                  <Grid item={true}>
+                    <Link href="/audit" style={{ textDecoration: 'none' }}>
+                      <Card sx={{ minWidth: 150, cursor: 'pointer', '&:hover': { bgcolor: 'action.hover' } }}>
+                        <CardContent>
+                          <SecurityIcon sx={{ fontSize: 40, color: 'primary.main' }} />
+                          <Typography variant="body1" sx={{ mt: 1 }}>
+                            Audit
+                          </Typography>
+                        </CardContent>
+                      </Card>
+                    </Link>
+                  </Grid>
                 </Grid>
               </Paper>
             </>
           )}
         </Container>
-    </Layout>
+      </Layout>
+    </ProtectedRoute>
   );
 }

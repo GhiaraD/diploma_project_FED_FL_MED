@@ -373,8 +373,36 @@ def federated_training_task(
         dataset_id: Local dataset identifier
         model_name: Model architecture name
     """
-    import io
-    import contextlib
+    import sys
+    
+    # Setup log file for real-time logging
+    log_dir = Path(settings.STORAGE_ROOT) / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / f"federated_train_{job_id}.log"
+    
+    # Open log file in unbuffered mode for real-time writing
+    log_handle = open(log_file, 'w', buffering=1)  # Line buffered
+    
+    class TeeOutput:
+        """Write to both original stream and log file."""
+        def __init__(self, original, log_file):
+            self.original = original
+            self.log_file = log_file
+        
+        def write(self, data):
+            self.original.write(data)
+            self.log_file.write(data)
+            self.log_file.flush()  # Force immediate write
+        
+        def flush(self):
+            self.original.flush()
+            self.log_file.flush()
+    
+    # Redirect stdout and stderr to log file (while keeping console output)
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+    sys.stdout = TeeOutput(old_stdout, log_handle)
+    sys.stderr = TeeOutput(old_stderr, log_handle)
     
     try:
         update_job_status(job_id, "running")
@@ -391,18 +419,11 @@ def federated_training_task(
         n_samples = dataset.num_samples
         dataset_name = dataset.name
         
-        log_buffer = io.StringIO()
-        
-        def log_and_capture(msg):
-            """Log to console and capture to buffer."""
-            print(msg)
-            log_buffer.write(msg + "\n")
-        
-        log_and_capture(f"[{settings.NODE_ID}] 🚀 Starting Flower client for round {round_id}...")
-        log_and_capture(f"[{settings.NODE_ID}] 📊 Model: {model_name}")
-        log_and_capture(f"[{settings.NODE_ID}] 📁 Dataset: {dataset_name} ({dataset_id})")
-        log_and_capture(f"[{settings.NODE_ID}] 📍 Path: {dataset_path}")
-        log_and_capture(f"[{settings.NODE_ID}] 🔢 Samples: {n_samples}")
+        print(f"[{settings.NODE_ID}] 🚀 Starting Flower client for round {round_id}...")
+        print(f"[{settings.NODE_ID}] 📊 Model: {model_name}")
+        print(f"[{settings.NODE_ID}] 📁 Dataset: {dataset_name} ({dataset_id})")
+        print(f"[{settings.NODE_ID}] 📍 Path: {dataset_path}")
+        print(f"[{settings.NODE_ID}] 🔢 Samples: {n_samples}")
         
         # Import and start Flower client directly
         # Note: This runs in the worker container which has flower_client.py
@@ -410,7 +431,7 @@ def federated_training_task(
         from flower_client import start_flower_client, get_last_training_metrics
         
         # Start Flower client (blocking call - will run until FL rounds complete)
-        log_and_capture(f"[{settings.NODE_ID}] 🔗 Connecting to Flower server...")
+        print(f"[{settings.NODE_ID}] 🔗 Connecting to Flower server...")
         
         start_flower_client(
             server_address=settings.FLOWER_SERVER,
@@ -420,10 +441,10 @@ def federated_training_task(
             dataset_path=dataset_path,
             device=settings.DEVICE,
             batch_size=32,
-            round_id=round_id  # ← Nou
+            round_id=round_id
         )
         
-        log_and_capture(f"[{settings.NODE_ID}] ✅ Flower client completed successfully")
+        print(f"[{settings.NODE_ID}] ✅ Flower client completed successfully")
         
         # Get training metrics from the last fit() call
         metrics = get_last_training_metrics()
@@ -436,7 +457,7 @@ def federated_training_task(
         
         model_saved = False
         if model_path.exists():
-            log_and_capture(f"[{settings.NODE_ID}] ✅ Model found at {model_path}")
+            print(f"[{settings.NODE_ID}] ✅ Model found at {model_path}")
             model_saved = True
             
             # Register model in database
@@ -453,9 +474,9 @@ def federated_training_task(
             )
             db.add(db_model)
             db.commit()
-            log_and_capture(f"[{settings.NODE_ID}] ✅ Model registered in database")
+            print(f"[{settings.NODE_ID}] ✅ Model registered in database")
         else:
-            log_and_capture(f"[{settings.NODE_ID}] ⚠️ Warning: Model file not found at {model_path}")
+            print(f"[{settings.NODE_ID}] ⚠️ Warning: Model file not found at {model_path}")
         
         result = {
             'round_id': round_id,
@@ -470,18 +491,9 @@ def federated_training_task(
             'note': 'Trained with Flower framework'
         }
         
-        log_and_capture(f"[{settings.NODE_ID}] 📈 Final metrics: {metrics}")
-        log_and_capture(f"[{settings.NODE_ID}] ✓ Training completed for round {round_id}")
-        
-        # Save logs to shared storage (accessible from API)
-        log_dir = Path(settings.STORAGE_ROOT) / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_file = log_dir / f"federated_train_{job_id}.log"
-        
-        with open(log_file, 'w') as f:
-            f.write(log_buffer.getvalue())
-        
-        log_and_capture(f"[{settings.NODE_ID}] 📝 Logs saved to {log_file}")
+        print(f"[{settings.NODE_ID}] 📈 Final metrics: {metrics}")
+        print(f"[{settings.NODE_ID}] ✓ Training completed for round {round_id}")
+        print(f"[{settings.NODE_ID}] 📝 Logs saved to {log_file}")
         
         db.close()
         update_job_status(job_id, "completed", result=result)
@@ -491,13 +503,15 @@ def federated_training_task(
     except Exception as e:
         error_msg = f"[{settings.NODE_ID}] ✗ Flower training failed: {e}"
         print(error_msg)
-        if 'log_buffer' in locals():
-            log_buffer.write(error_msg + "\n")
-            log_dir = Path(settings.STORAGE_ROOT) / "logs"
-            log_dir.mkdir(parents=True, exist_ok=True)
-            log_file = log_dir / f"federated_train_{job_id}.log"
-            with open(log_file, 'w') as f:
-                f.write(log_buffer.getvalue())
+        import traceback
+        traceback.print_exc()
+        update_job_status(job_id, "failed", error=str(e))
+        raise
+    finally:
+        # Restore original stdout/stderr
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
+        log_handle.close()
         
         import traceback
         traceback.print_exc()

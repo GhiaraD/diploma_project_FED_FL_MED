@@ -30,6 +30,8 @@ import {
 } from '@mui/icons-material';
 import Layout from '@/components/Layout';
 import UnifiedLogsViewer from '@/components/UnifiedLogsViewer';
+import ProtectedRoute from '@/components/ProtectedRoute';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface Job {
   job_id: string;
@@ -53,6 +55,7 @@ export default function JobsPage() {
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [logsDialogOpen, setLogsDialogOpen] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const { token } = useAuth();
 
   const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8001';
 
@@ -63,7 +66,11 @@ export default function JobsPage() {
       if (statusFilter !== 'all') url += `&status=${statusFilter}`;
       if (typeFilter !== 'all') url += `&job_type=${typeFilter}`;
 
-      const response = await fetch(url);
+      const response = await fetch(url, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
       if (!response.ok) throw new Error('Failed to fetch jobs');
       
       const data = await response.json();
@@ -78,13 +85,15 @@ export default function JobsPage() {
 
   // Auto-refresh every 5 seconds if enabled
   useEffect(() => {
-    fetchJobs();
-    
-    if (autoRefresh) {
-      const interval = setInterval(fetchJobs, 5000);
-      return () => clearInterval(interval);
+    if (token) {
+      fetchJobs();
+      
+      if (autoRefresh) {
+        const interval = setInterval(fetchJobs, 5000);
+        return () => clearInterval(interval);
+      }
     }
-  }, [statusFilter, typeFilter, autoRefresh]);
+  }, [statusFilter, typeFilter, autoRefresh, token]);
 
   // Open logs dialog
   const handleViewLogs = async (job: Job) => {
@@ -142,7 +151,8 @@ export default function JobsPage() {
   };
 
   return (
-    <Layout title="Jobs & Management">
+    <ProtectedRoute>
+      <Layout title="Jobs & Management">
       <Box>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
           <Typography variant="h4" component="h1">
@@ -302,6 +312,7 @@ export default function JobsPage() {
                   jobId={selectedJob.job_id}
                   jobStatus={selectedJob.status}
                   apiBase={API_BASE}
+                  token={token}
                 />
               </>
             )}
@@ -312,5 +323,6 @@ export default function JobsPage() {
         </Dialog>
       </Box>
     </Layout>
+    </ProtectedRoute>
   );
 }

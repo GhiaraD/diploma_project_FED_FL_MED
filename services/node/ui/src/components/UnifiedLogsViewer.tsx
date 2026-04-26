@@ -31,9 +31,10 @@ interface UnifiedLogsViewerProps {
   jobId: string;
   jobStatus: string;
   apiBase: string;
+  token: string;
 }
 
-export default function UnifiedLogsViewer({ jobId, jobStatus, apiBase }: UnifiedLogsViewerProps) {
+export default function UnifiedLogsViewer({ jobId, jobStatus, apiBase, token }: UnifiedLogsViewerProps) {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isPolling, setIsPolling] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
@@ -60,8 +61,17 @@ export default function UnifiedLogsViewer({ jobId, jobStatus, apiBase }: Unified
     setError(null);
 
     try {
-      const response = await fetch(`${apiBase}/api/jobs/${jobId}/logs/static?lines=1000`);
-      if (!response.ok) throw new Error('Failed to fetch logs');
+      const response = await fetch(`${apiBase}/api/jobs/${jobId}/logs/static?lines=1000`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      }
       
       const data = await response.json();
       
