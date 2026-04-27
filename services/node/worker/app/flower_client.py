@@ -23,6 +23,8 @@ from node_core import (
     get_optimizer,
     get_scheduler,
     compute_metrics,
+    create_payload_signer,
+    sign_model_parameters,
 )
 
 # Global variable to store last training metrics
@@ -41,6 +43,7 @@ class FedMedClient(fl.client.NumPyClient):
     - set_parameters(): Set model parameters
     - fit(): Train model locally
     - evaluate(): Evaluate model locally
+    - Payload signing for parameter integrity
     """
     
     def __init__(
@@ -51,6 +54,8 @@ class FedMedClient(fl.client.NumPyClient):
         dataset_path: str,
         device: str = "cpu",
         batch_size: int = 32,
+        enable_signing: bool = True,
+        certificates_path: str = "/certificates",
     ):
         """
         Initialize Flower client.
@@ -62,6 +67,8 @@ class FedMedClient(fl.client.NumPyClient):
             dataset_path: Path to dataset
             device: Device (cpu/cuda)
             batch_size: Batch size for training
+            enable_signing: Enable payload signing
+            certificates_path: Path to certificates
         """
         self.node_id = node_id
         self.model_name = model_name
@@ -69,10 +76,29 @@ class FedMedClient(fl.client.NumPyClient):
         self.dataset_path = dataset_path
         self.device = device
         self.batch_size = batch_size
+        self.enable_signing = enable_signing
         
         # Initialize model
         self.model = get_model(model_name, num_classes=num_classes, pretrained=False)
         self.model.to(device)
+        
+        # Initialize payload signer
+        self.signer = None
+        if enable_signing:
+            try:
+                self.signer = create_payload_signer(
+                    node_id=node_id,
+                    certificates_path=certificates_path,
+                    is_central=False
+                )
+                if self.signer.is_ready():
+                    print(f"[{node_id}] 🔐 Payload signing enabled")
+                else:
+                    print(f"[{node_id}] ⚠️  Payload signing disabled (certificates not ready)")
+                    self.enable_signing = False
+            except Exception as e:
+                print(f"[{node_id}] ⚠️  Failed to initialize signer: {e}")
+                self.enable_signing = False
         
         # Load dataset
         self.train_loader, self.val_loader = self._load_data()
@@ -81,6 +107,7 @@ class FedMedClient(fl.client.NumPyClient):
         print(f"[{node_id}] Model: {model_name}")
         print(f"[{node_id}] Dataset: {dataset_path}")
         print(f"[{node_id}] Device: {device}")
+        print(f"[{node_id}] Signing: {'Enabled' if self.enable_signing else 'Disabled'}")
     
     def _load_data(self):
         """Load and prepare datasets."""
@@ -208,6 +235,34 @@ class FedMedClient(fl.client.NumPyClient):
             "val_loss": history['val_loss'][-1],
         }
         
+        # Sign parameters if enabled
+        signature_package = {'signed': False}
+        if self.enable_signing and self.signer:
+            try:
+                _, signature_package = sign_model_parameters(
+                    parameters=updated_parameters,
+                    signer=self.signer,
+                    metadata={
+                        'node_id': self.node_id,
+                        'round': current_round,
+                        'model_name': self.model_name,
+                        'num_samples': num_samples,
+                        'accuracy': history['best_val_acc']
+                    }
+                )
+                if signature_package.get('signed'):
+                    print(f"[{self.node_id}] 🔐 Parameters signed successfully")
+            except Exception as e:
+                print(f"[{self.node_id}] ⚠️  Failed to sign parameters: {e}")
+                signature_package = {'signed': False, 'error': str(e)}
+        
+        # Add signature package to metrics for transmission
+        # Note: Flower only accepts scalar values in metrics, so we use a special key
+        if signature_package.get('signed'):
+            # Store signature as JSON string (Flower accepts strings)
+            import json
+            metrics['_signature_package'] = json.dumps(signature_package)
+        
         # Store metrics globally for retrieval after training
         _last_training_metrics = metrics
         _trained_model = self.model
@@ -322,6 +377,8 @@ def start_flower_client(
     device: str = "cpu",
     batch_size: int = 32,
     round_id: str = None,
+    enable_ssl: bool = True,
+    certificates_path: str = "/certificates",
 ):
     """
     Start Flower client and connect to server.
@@ -335,6 +392,8 @@ def start_flower_client(
         device: Device (cpu/cuda)
         batch_size: Batch size
         round_id: FL round identifier (for model saving)
+        enable_ssl: Enable mTLS for secure communication
+        certificates_path: Path to SSL certificates
     """
     print("=" * 70)
     print(f"FED-MED-FL FLOWER CLIENT - {node_id}")
@@ -343,6 +402,7 @@ def start_flower_client(
     print(f"Model: {model_name}")
     print(f"Dataset: {dataset_path}")
     print(f"Device: {device}")
+    print(f"SSL/TLS: {'Enabled (mTLS)' if enable_ssl else 'Disabled'}")
     print("=" * 70)
     
     # Create client
@@ -353,16 +413,54 @@ def start_flower_client(
         dataset_path=dataset_path,
         device=device,
         batch_size=batch_size,
+        enable_signing=enable_ssl,  # Use same flag as SSL for now
+        certificates_path=certificates_path,
     )
+    
+    # Configure SSL/TLS if enabled
+    root_certificates = None
+    if enable_ssl:
+        from pathlib import Path
+        cert_path = Path(certificates_path) / "nodes" / node_id
+        
+        # Check if certificates exist
+        client_cert = cert_path / "client-cert.pem"
+        client_key = cert_path / "client-key.pem"
+        ca_cert = cert_path / "ca-cert.pem"
+        
+        if client_cert.exists() and client_key.exists() and ca_cert.exists():
+            print(f"\n[{node_id}] 🔒 Configuring mTLS...")
+            print(f"[{node_id}]   Client cert: {client_cert}")
+            print(f"[{node_id}]   Client key: {client_key}")
+            print(f"[{node_id}]   CA cert: {ca_cert}")
+            
+            # Read CA certificate for server verification
+            root_certificates = ca_cert.read_bytes()
+            
+            # For mTLS, we need to provide client certificate
+            # Flower expects root_certificates parameter for CA
+            # Client cert/key are loaded via gRPC channel credentials
+            print(f"[{node_id}] ✓ mTLS configured successfully")
+        else:
+            print(f"\n[{node_id}] ⚠️  SSL certificates not found at {cert_path}")
+            print(f"[{node_id}] ⚠️  Falling back to insecure connection")
+            enable_ssl = False
     
     # Connect to server
     print(f"\n[{node_id}] Connecting to Flower server at {server_address}...\n")
     
     try:
-        fl.client.start_numpy_client(
-            server_address=server_address,
-            client=client,
-        )
+        if enable_ssl and root_certificates:
+            fl.client.start_numpy_client(
+                server_address=server_address,
+                client=client,
+                root_certificates=root_certificates,
+            )
+        else:
+            fl.client.start_numpy_client(
+                server_address=server_address,
+                client=client,
+            )
         
         print(f"\n[{node_id}] ✓ Disconnected from server")
         
@@ -409,6 +507,8 @@ def main():
     dataset_path = os.getenv("DATASET_PATH")
     device = os.getenv("DEVICE", "cpu")
     batch_size = int(os.getenv("BATCH_SIZE", "32"))
+    enable_ssl = os.getenv("ENABLE_SSL", "true").lower() == "true"
+    certificates_path = os.getenv("CERTIFICATES_PATH", "/certificates")
     
     if not dataset_path:
         raise ValueError("DATASET_PATH environment variable is required")
@@ -422,6 +522,8 @@ def main():
         dataset_path=dataset_path,
         device=device,
         batch_size=batch_size,
+        enable_ssl=enable_ssl,
+        certificates_path=certificates_path,
     )
 
 

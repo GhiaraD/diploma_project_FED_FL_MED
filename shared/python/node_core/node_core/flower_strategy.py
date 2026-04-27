@@ -15,6 +15,7 @@ import os
 
 from .ml_models import get_model, save_model
 from .utils_hash import compute_model_hash
+from .crypto_utils import create_payload_signer, verify_model_parameters, sign_model_parameters
 
 
 class FedMedStrategy(fl.server.strategy.FedAvg):
@@ -37,6 +38,10 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
         num_epochs: int = 2,
         learning_rate: float = 0.001,
         optimizer: str = "adam",
+        enable_signing: bool = True,
+        certificates_path: str = "/certificates",
+        signature_policy: str = "log",  # "log", "warn", "reject"
+        min_valid_signatures: float = 0.8,  # Minimum 80% must be valid
         **kwargs
     ):
         """
@@ -50,6 +55,8 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
             num_epochs: Number of epochs per round
             learning_rate: Learning rate for training
             optimizer: Optimizer name
+            enable_signing: Enable payload signing and verification
+            certificates_path: Path to certificates
             **kwargs: Additional arguments for FedAvg
         """
         super().__init__(**kwargs)
@@ -61,6 +68,9 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
         self.num_epochs = num_epochs
         self.learning_rate = learning_rate
         self.optimizer = optimizer
+        self.enable_signing = enable_signing
+        self.signature_policy = signature_policy
+        self.min_valid_signatures = min_valid_signatures
         
         # Create storage directories
         self.models_dir = self.storage_path / "models"
@@ -69,14 +79,44 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
         # Initialize global model
         self.model = get_model(model_name, num_classes=num_classes, pretrained=True)
         
+        # Initialize payload signer/verifier
+        self.signer = None
+        if enable_signing:
+            try:
+                self.signer = create_payload_signer(
+                    node_id="central",
+                    certificates_path=certificates_path,
+                    is_central=True
+                )
+                if self.signer.is_ready():
+                    print(f"[FedMedStrategy] 🔐 Payload signing/verification enabled")
+                else:
+                    print(f"[FedMedStrategy] ⚠️  Payload signing disabled (certificates not ready)")
+                    self.enable_signing = False
+            except Exception as e:
+                print(f"[FedMedStrategy] ⚠️  Failed to initialize signer: {e}")
+                self.enable_signing = False
+        
         # Track rounds
         self.current_round = 0
         self.round_history = []
+        
+        # Track signature verification stats
+        self.signature_stats = {
+            'total_verifications': 0,
+            'successful_verifications': 0,
+            'failed_verifications': 0,
+            'unsigned_parameters': 0
+        }
         
         print(f"[FedMedStrategy] Initialized with {model_name}")
         print(f"[FedMedStrategy] Storage: {self.storage_path}")
         print(f"[FedMedStrategy] Save models: {save_models}")
         print(f"[FedMedStrategy] Training config: {num_epochs} epochs, lr={learning_rate}, optimizer={optimizer}")
+        print(f"[FedMedStrategy] Signing: {'Enabled' if self.enable_signing else 'Disabled'}")
+        if self.enable_signing:
+            print(f"[FedMedStrategy] Signature Policy: {self.signature_policy}")
+            print(f"[FedMedStrategy] Min Valid Signatures: {self.min_valid_signatures * 100:.0f}%")
     
     def configure_fit(
         self, 
@@ -164,8 +204,10 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
             print(f"{'='*70}\n")
             return None, {}
         
-        # Log client metrics before aggregation
+        # Log client metrics and verify signatures
         print(f"\n  📊 Client Results:")
+        clients_to_reject = []  # Track clients to reject based on policy
+        
         for i, (client, fit_res) in enumerate(results, 1):
             metrics = fit_res.metrics
             num_samples = fit_res.num_examples
@@ -175,6 +217,70 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
             print(f"       • Accuracy: {acc:.2%}")
             print(f"       • Train Loss: {metrics.get('train_loss', 0):.4f}")
             print(f"       • Val Loss: {metrics.get('val_loss', 0):.4f}")
+            
+            # Verify signature if present
+            if self.enable_signing and self.signer:
+                signature_package_json = metrics.get('_signature_package')
+                if signature_package_json:
+                    # Deserialize JSON string to dict
+                    import json
+                    try:
+                        signature_package = json.loads(signature_package_json)
+                    except:
+                        signature_package = None
+                    
+                    if signature_package and signature_package.get('signed'):
+                        # Get parameters from fit_res
+                        parameters = fl.common.parameters_to_ndarrays(fit_res.parameters)
+                        
+                        # Verify signature
+                        is_valid, message = verify_model_parameters(
+                            parameters=parameters,
+                            signature_package=signature_package,
+                            verifier=self.signer,
+                            use_cache=True
+                        )
+                        
+                        self.signature_stats['total_verifications'] += 1
+                        
+                        if is_valid:
+                            print(f"       🔐 Signature: ✓ Valid")
+                            self.signature_stats['successful_verifications'] += 1
+                        else:
+                            print(f"       🔐 Signature: ✗ Invalid - {message}")
+                            self.signature_stats['failed_verifications'] += 1
+                            
+                            # Apply signature policy
+                            if self.signature_policy == "reject":
+                                print(f"       ⚠️  Policy: REJECT - Client will be excluded from aggregation")
+                                clients_to_reject.append(client.cid)
+                            elif self.signature_policy == "warn":
+                                print(f"       ⚠️  Policy: WARN - Invalid signature detected but continuing")
+                            else:  # "log"
+                                print(f"       ℹ️  Policy: LOG - Invalid signature logged")
+                    else:
+                        print(f"       🔐 Signature: Not signed")
+                        self.signature_stats['unsigned_parameters'] += 1
+                else:
+                    print(f"       🔐 Signature: Not signed")
+                    self.signature_stats['unsigned_parameters'] += 1
+        
+        # Apply signature policy - filter out rejected clients
+        if clients_to_reject:
+            print(f"\n  🚫 Rejecting {len(clients_to_reject)} client(s) due to invalid signatures")
+            results = [(c, r) for c, r in results if c.cid not in clients_to_reject]
+            
+            if not results:
+                print("  ✗ No valid results remaining after signature policy enforcement")
+                print(f"{'='*70}\n")
+                return None, {}
+        
+        # Check if we meet minimum valid signatures threshold (for "warn" policy)
+        if self.signature_policy == "warn" and self.signature_stats['total_verifications'] > 0:
+            valid_ratio = self.signature_stats['successful_verifications'] / self.signature_stats['total_verifications']
+            if valid_ratio < self.min_valid_signatures:
+                print(f"\n  ⚠️  WARNING: Only {valid_ratio:.1%} signatures are valid (threshold: {self.min_valid_signatures:.1%})")
+                print(f"  ⚠️  Consider investigating signature failures or switching to 'reject' policy")
         
         # Call parent FedAvg aggregation
         print(f"\n  🔄 Aggregating parameters...")
@@ -202,6 +308,15 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
                             print(f"    • {key}: {value:.4f}")
                     else:
                         print(f"    • {key}: {value}")
+            
+            # Log signature verification stats
+            if self.enable_signing:
+                print(f"  🔐 Signature Verification Stats:")
+                print(f"    • Total verifications: {self.signature_stats['total_verifications']}")
+                print(f"    • Successful: {self.signature_stats['successful_verifications']}")
+                print(f"    • Failed: {self.signature_stats['failed_verifications']}")
+                print(f"    • Unsigned: {self.signature_stats['unsigned_parameters']}")
+            
             print(f"{'='*70}\n")
             
             # Store round history
@@ -327,6 +442,10 @@ def create_fedmed_strategy(
     num_epochs: int = 5,
     learning_rate: float = 0.001,
     optimizer: str = "adam",
+    enable_signing: bool = True,
+    certificates_path: str = "/certificates",
+    signature_policy: str = "log",  # "log", "warn", "reject"
+    min_valid_signatures: float = 0.8,  # Minimum 80% must be valid
     **kwargs
 ) -> FedMedStrategy:
     """
@@ -344,6 +463,10 @@ def create_fedmed_strategy(
         num_epochs: Number of epochs per round
         learning_rate: Learning rate for training
         optimizer: Optimizer name
+        enable_signing: Enable payload signing and verification
+        certificates_path: Path to certificates
+        signature_policy: Policy for invalid signatures ("log", "warn", "reject")
+        min_valid_signatures: Minimum fraction of valid signatures (for "warn" policy)
         **kwargs: Additional strategy arguments
     
     Returns:
@@ -356,6 +479,10 @@ def create_fedmed_strategy(
         num_epochs=num_epochs,
         learning_rate=learning_rate,
         optimizer=optimizer,
+        enable_signing=enable_signing,
+        certificates_path=certificates_path,
+        signature_policy=signature_policy,
+        min_valid_signatures=min_valid_signatures,
         fraction_fit=fraction_fit,
         fraction_evaluate=fraction_evaluate,
         min_fit_clients=min_fit_clients,

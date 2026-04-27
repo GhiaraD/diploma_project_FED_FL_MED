@@ -253,5 +253,47 @@ def list_rounds():
 
 if __name__ == "__main__":
     import uvicorn
+    
+    # Add node_core to path (already done above, but ensure it's available)
+    sys.path.insert(0, '/app/shared/python/node_core')
+    
+    from node_core import configure_fastapi_ssl, get_uvicorn_config
+    
+    # Check if SSL should be enabled
+    enable_ssl = os.getenv("ENABLE_SSL", "true").lower() == "true"
+    certificates_path = os.getenv("CERTIFICATES_PATH", "/certificates")
     port = int(os.getenv("PORT", "8081"))  # Changed to 8081 (8080 for Flower gRPC)
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    
+    ssl_config = None
+    if enable_ssl:
+        print(f"\n{'='*70}")
+        print(f"CONFIGURING HTTPS FOR CENTRAL API")
+        print(f"{'='*70}")
+        
+        # Configure SSL
+        ssl_config = configure_fastapi_ssl(
+            app=app,
+            node_id=None,
+            is_central=True,
+            certificates_path=certificates_path,
+            require_client_cert=False,  # Optional: enable for mTLS
+            enforce_client_cert=False
+        )
+        
+        if ssl_config:
+            print(f"✓ HTTPS enabled for Central API")
+        else:
+            print(f"⚠️  HTTPS configuration failed, falling back to HTTP")
+        
+        print(f"{'='*70}\n")
+    
+    # Get Uvicorn configuration
+    uvicorn_config = get_uvicorn_config(
+        ssl_config=ssl_config,
+        host="0.0.0.0",
+        port=port
+    )
+    
+    # Start server
+    uvicorn.run(app, **uvicorn_config)
+

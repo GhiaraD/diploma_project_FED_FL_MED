@@ -1705,4 +1705,47 @@ def get_job_logs_static(
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host=settings.API_HOST, port=settings.API_PORT)
+    import sys
+    
+    # Add node_core to path
+    sys.path.insert(0, '/app/shared/python/node_core')
+    
+    from node_core import configure_fastapi_ssl, get_uvicorn_config
+    
+    # Check if SSL should be enabled
+    enable_ssl = os.getenv("ENABLE_SSL", "true").lower() == "true"
+    certificates_path = os.getenv("CERTIFICATES_PATH", "/certificates")
+    
+    ssl_config = None
+    if enable_ssl:
+        print(f"\n{'='*70}")
+        print(f"CONFIGURING HTTPS FOR NODE API - {settings.NODE_ID}")
+        print(f"{'='*70}")
+        
+        # Configure SSL
+        ssl_config = configure_fastapi_ssl(
+            app=app,
+            node_id=settings.NODE_ID,
+            is_central=False,
+            certificates_path=certificates_path,
+            require_client_cert=False,  # Optional: enable for mTLS
+            enforce_client_cert=False
+        )
+        
+        if ssl_config:
+            print(f"✓ HTTPS enabled for {settings.NODE_ID}")
+        else:
+            print(f"⚠️  HTTPS configuration failed, falling back to HTTP")
+        
+        print(f"{'='*70}\n")
+    
+    # Get Uvicorn configuration
+    uvicorn_config = get_uvicorn_config(
+        ssl_config=ssl_config,
+        host=settings.API_HOST,
+        port=settings.API_PORT
+    )
+    
+    # Start server
+    uvicorn.run(app, **uvicorn_config)
+

@@ -31,3 +31,11 @@ artifacts/
 
 # Docker
 *.tar
+
+# Security - Certificates (NU se comit în producție)
+# Pentru development, certificatele sunt generate local
+certificates/
+*.pem
+*.key
+*.crt
+*.csr

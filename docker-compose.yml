@@ -22,11 +22,18 @@ services:
       NUM_EPOCHS: 2
       LEARNING_RATE: 0.001
       OPTIMIZER: adam
+      # SSL/TLS Configuration
+      ENABLE_SSL: "false"  # Disabled for UI compatibility
+      CERTIFICATES_PATH: /certificates
+      # Security Policy Configuration
+      SIGNATURE_POLICY: "log"  # Options: "log", "warn", "reject"
+      MIN_VALID_SIGNATURES: "0.8"  # 80% minimum valid signatures
     volumes:
       - ./storage/central:/storage
+      - ./certificates:/certificates:ro  # Mount certificates read-only
     ports:
-      - "8080:8080"  # Flower gRPC
-      - "8081:8081"  # Management API
+      - "8080:8080"  # Flower gRPC (with mTLS)
+      - "8081:8081"  # Management API (with HTTPS if enabled)
     command: python -m app.main  # Start management API (Flower server started separately)
 
   # ===== Node 1 =====
@@ -51,13 +58,17 @@ services:
       API_KEY_EXPIRE_DAYS: 365
       AUDIT_LOG_LEVEL: INFO
       AUDIT_LOG_RETENTION_DAYS: 2555
+      # SSL/TLS Configuration
+      ENABLE_SSL: "false"  # Disabled for UI compatibility
+      CERTIFICATES_PATH: /certificates
     volumes:
       - ./storage/node1:/storage
+      - ./certificates:/certificates:ro  # Mount certificates read-only
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
     ports:
-      - "8001:8000"
+      - "8001:8000"  # Node API (with HTTPS if enabled)
     depends_on:
       - central
       - node1-redis
@@ -81,8 +92,12 @@ services:
       REDIS_URL: redis://node1-redis:6379/0
       DEVICE: cuda
       TZ: ${TZ:-UTC}
+      # SSL/TLS Configuration
+      ENABLE_SSL: "true"
+      CERTIFICATES_PATH: /certificates
     volumes:
       - ./storage/node1:/storage
+      - ./certificates:/certificates:ro  # Mount certificates read-only
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
     depends_on:
@@ -134,13 +149,17 @@ services:
       API_KEY_EXPIRE_DAYS: 365
       AUDIT_LOG_LEVEL: INFO
       AUDIT_LOG_RETENTION_DAYS: 2555
+      # SSL/TLS Configuration
+      ENABLE_SSL: "false"  # Disabled for UI compatibility
+      CERTIFICATES_PATH: /certificates
     volumes:
       - ./storage/node2:/storage
+      - ./certificates:/certificates:ro  # Mount certificates read-only
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
     ports:
-      - "8002:8000"
+      - "8002:8000"  # Node API (with HTTPS if enabled)
     depends_on:
       - central
       - node2-redis
@@ -164,8 +183,12 @@ services:
       REDIS_URL: redis://node2-redis:6379/0
       DEVICE: cuda
       TZ: ${TZ:-UTC}
+      # SSL/TLS Configuration
+      ENABLE_SSL: "true"
+      CERTIFICATES_PATH: /certificates
     volumes:
       - ./storage/node2:/storage
+      - ./certificates:/certificates:ro  # Mount certificates read-only
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
     depends_on:
@@ -217,13 +240,17 @@ services:
       API_KEY_EXPIRE_DAYS: 365
       AUDIT_LOG_LEVEL: INFO
       AUDIT_LOG_RETENTION_DAYS: 2555
+      # SSL/TLS Configuration
+      ENABLE_SSL: "false"  # Disabled for UI compatibility
+      CERTIFICATES_PATH: /certificates
     volumes:
       - ./storage/node3:/storage
+      - ./certificates:/certificates:ro  # Mount certificates read-only
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
     ports:
-      - "8003:8000"
+      - "8003:8000"  # Node API (with HTTPS if enabled)
     depends_on:
       - central
       - node3-redis
@@ -247,8 +274,12 @@ services:
       REDIS_URL: redis://node3-redis:6379/0
       DEVICE: cuda
       TZ: ${TZ:-UTC}
+      # SSL/TLS Configuration
+      ENABLE_SSL: "true"
+      CERTIFICATES_PATH: /certificates
     volumes:
       - ./storage/node3:/storage
+      - ./certificates:/certificates:ro  # Mount certificates read-only
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
     depends_on:

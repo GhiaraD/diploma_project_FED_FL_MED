@@ -17,15 +17,48 @@ NODE2_URL="http://localhost:8002"
 MODEL_NAME="resnet18"
 ROUND_ID="R-TEST-$(date +%s)"
 
+# Login credentials
+NODE1_USER="admin@node1.fed-med-fl.com"
+NODE1_PASS="AdminNode1@2026"
+NODE2_USER="admin@node2.fed-med-fl.com"
+NODE2_PASS="AdminNode2@2026"
+
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}Quick FL Test - Verify Improvements${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
 
+# Login to Node1
+echo -e "${BLUE}Authenticating to Node1...${NC}"
+LOGIN1_RESPONSE=$(curl -s -X POST "${NODE1_URL}/api/auth/login" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=${NODE1_USER}&password=${NODE1_PASS}")
+TOKEN1=$(echo $LOGIN1_RESPONSE | grep -o '"access_token":"[^"]*' | cut -d'"' -f4)
+
+if [ -z "$TOKEN1" ]; then
+    echo -e "${RED}✗ Node1 authentication failed${NC}"
+    exit 1
+fi
+echo -e "${GREEN}✓ Node1 authenticated${NC}"
+
+# Login to Node2
+echo -e "${BLUE}Authenticating to Node2...${NC}"
+LOGIN2_RESPONSE=$(curl -s -X POST "${NODE2_URL}/api/auth/login" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=${NODE2_USER}&password=${NODE2_PASS}")
+TOKEN2=$(echo $LOGIN2_RESPONSE | grep -o '"access_token":"[^"]*' | cut -d'"' -f4)
+
+if [ -z "$TOKEN2" ]; then
+    echo -e "${RED}✗ Node2 authentication failed${NC}"
+    exit 1
+fi
+echo -e "${GREEN}✓ Node2 authenticated${NC}"
+echo ""
+
 # Get datasets
 echo -e "${BLUE}Getting active datasets...${NC}"
-DATASET1_ID=$(curl -s "${NODE1_URL}/api/data/list" | python3 -c "import sys, json; data = json.load(sys.stdin); active = [d for d in data if d['is_active']]; print(active[0]['dataset_id'] if active else '')")
-DATASET2_ID=$(curl -s "${NODE2_URL}/api/data/list" | python3 -c "import sys, json; data = json.load(sys.stdin); active = [d for d in data if d['is_active']]; print(active[0]['dataset_id'] if active else '')")
+DATASET1_ID=$(curl -s -H "Authorization: Bearer ${TOKEN1}" "${NODE1_URL}/api/data/active" | python3 -c "import sys, json; data = json.load(sys.stdin); active = data.get('active_dataset'); print(active['dataset_id'] if active else '')")
+DATASET2_ID=$(curl -s -H "Authorization: Bearer ${TOKEN2}" "${NODE2_URL}/api/data/active" | python3 -c "import sys, json; data = json.load(sys.stdin); active = data.get('active_dataset'); print(active['dataset_id'] if active else '')")
 
 echo -e "${GREEN}✓ Node1 dataset: ${DATASET1_ID}${NC}"
 echo -e "${GREEN}✓ Node2 dataset: ${DATASET2_ID}${NC}"
@@ -44,6 +77,8 @@ NUM_EPOCHS=2 \
 LEARNING_RATE=0.001 \
 OPTIMIZER='adam' \
 FLOWER_SERVER_ADDRESS='0.0.0.0:8080' \
+ENABLE_SSL='true' \
+CERTIFICATES_PATH='/certificates' \
 python -m app.flower_server > /tmp/flower_${MODEL_NAME}.log 2>&1 &
 echo \$! > /tmp/flower_server.pid
 sleep 2
@@ -55,13 +90,15 @@ echo ""
 
 # Start training
 echo -e "${BLUE}Starting training on Node1...${NC}"
-JOB1_RESPONSE=$(curl -s -X POST "${NODE1_URL}/api/federated/train/${ROUND_ID}?dataset_id=${DATASET1_ID}&model_name=${MODEL_NAME}")
+JOB1_RESPONSE=$(curl -s -X POST "${NODE1_URL}/api/federated/train/${ROUND_ID}?dataset_id=${DATASET1_ID}&model_name=${MODEL_NAME}" \
+  -H "Authorization: Bearer ${TOKEN1}")
 JOB1_ID=$(echo $JOB1_RESPONSE | grep -o '"job_id":"[^"]*"' | cut -d'"' -f4)
 echo -e "${GREEN}✓ Job ID: ${JOB1_ID}${NC}"
 echo ""
 
 echo -e "${BLUE}Starting training on Node2...${NC}"
-JOB2_RESPONSE=$(curl -s -X POST "${NODE2_URL}/api/federated/train/${ROUND_ID}?dataset_id=${DATASET2_ID}&model_name=${MODEL_NAME}")
+JOB2_RESPONSE=$(curl -s -X POST "${NODE2_URL}/api/federated/train/${ROUND_ID}?dataset_id=${DATASET2_ID}&model_name=${MODEL_NAME}" \
+  -H "Authorization: Bearer ${TOKEN2}")
 JOB2_ID=$(echo $JOB2_RESPONSE | grep -o '"job_id":"[^"]*"' | cut -d'"' -f4)
 echo -e "${GREEN}✓ Job ID: ${JOB2_ID}${NC}"
 echo ""
@@ -72,8 +109,8 @@ MAX_WAIT=300
 ELAPSED=0
 
 while [ $ELAPSED -lt $MAX_WAIT ]; do
-    JOB1_STATUS=$(curl -s "${NODE1_URL}/api/train/status/${JOB1_ID}" 2>/dev/null | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4 | tr -d '\n\r ')
-    JOB2_STATUS=$(curl -s "${NODE2_URL}/api/train/status/${JOB2_ID}" 2>/dev/null | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4 | tr -d '\n\r ')
+    JOB1_STATUS=$(curl -s -H "Authorization: Bearer ${TOKEN1}" "${NODE1_URL}/api/train/status/${JOB1_ID}" 2>/dev/null | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4 | tr -d '\n\r ')
+    JOB2_STATUS=$(curl -s -H "Authorization: Bearer ${TOKEN2}" "${NODE2_URL}/api/train/status/${JOB2_ID}" 2>/dev/null | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4 | tr -d '\n\r ')
     
     JOB1_STATUS=${JOB1_STATUS:-unknown}
     JOB2_STATUS=${JOB2_STATUS:-unknown}
@@ -118,11 +155,11 @@ echo -e "${BLUE}========================================${NC}"
 echo ""
 
 echo -e "${YELLOW}Node1 Job Result:${NC}"
-curl -s "${NODE1_URL}/api/train/status/${JOB1_ID}" | python3 -m json.tool | grep -A 20 '"result"'
+curl -s -H "Authorization: Bearer ${TOKEN1}" "${NODE1_URL}/api/train/status/${JOB1_ID}" | python3 -m json.tool | grep -A 20 '"result"'
 echo ""
 
 echo -e "${YELLOW}Checking for required fields:${NC}"
-JOB1_RESULT=$(curl -s "${NODE1_URL}/api/train/status/${JOB1_ID}")
+JOB1_RESULT=$(curl -s -H "Authorization: Bearer ${TOKEN1}" "${NODE1_URL}/api/train/status/${JOB1_ID}")
 
 # Check dataset_id
 if echo "$JOB1_RESULT" | grep -q '"dataset_id"'; then
@@ -163,7 +200,7 @@ echo ""
 
 # Check federated history
 echo -e "${YELLOW}Federated History:${NC}"
-curl -s "${NODE1_URL}/api/federated/history" | python3 -c "
+curl -s -H "Authorization: Bearer ${TOKEN1}" "${NODE1_URL}/api/federated/history" | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
 rounds = data.get('rounds', [])

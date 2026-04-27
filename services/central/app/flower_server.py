@@ -28,6 +28,10 @@ def start_flower_server(
     num_epochs: int = 2,
     learning_rate: float = 0.001,
     optimizer: str = "adam",
+    enable_ssl: bool = True,
+    certificates_path: str = "/certificates",
+    signature_policy: str = "log",
+    min_valid_signatures: float = 0.8,
 ):
     """
     Start Flower server for federated learning.
@@ -46,6 +50,8 @@ def start_flower_server(
         num_epochs: Number of epochs per round
         learning_rate: Learning rate for training
         optimizer: Optimizer name
+        enable_ssl: Enable mTLS for secure communication
+        certificates_path: Path to SSL certificates
     """
     print("=" * 70)
     print("FED-MED-FL FLOWER SERVER")
@@ -58,6 +64,7 @@ def start_flower_server(
     print(f"Model: {model_name}")
     print(f"Storage: {storage_path}")
     print(f"Training: {num_epochs} epochs, lr={learning_rate}, optimizer={optimizer}")
+    print(f"SSL/TLS: {'Enabled (mTLS)' if enable_ssl else 'Disabled'}")
     print("=" * 70)
     
     # Create strategy
@@ -73,21 +80,67 @@ def start_flower_server(
         num_epochs=num_epochs,
         learning_rate=learning_rate,
         optimizer=optimizer,
+        enable_signing=enable_ssl,  # Use same flag as SSL
+        certificates_path=certificates_path,
+        signature_policy=signature_policy,
+        min_valid_signatures=min_valid_signatures,
     )
     
     # Configure server
     config = fl.server.ServerConfig(num_rounds=num_rounds)
+    
+    # Configure SSL/TLS if enabled
+    ssl_config = None
+    if enable_ssl:
+        from pathlib import Path
+        cert_path = Path(certificates_path) / "central"
+        
+        # Check if certificates exist
+        server_cert = cert_path / "server-cert.pem"
+        server_key = cert_path / "server-key.pem"
+        ca_cert = cert_path / "ca-cert.pem"
+        
+        if server_cert.exists() and server_key.exists() and ca_cert.exists():
+            print(f"\n[Server] 🔒 Configuring mTLS...")
+            print(f"[Server]   Server cert: {server_cert}")
+            print(f"[Server]   Server key: {server_key}")
+            print(f"[Server]   CA cert: {ca_cert}")
+            
+            # Flower expects tuple of (ca_cert_bytes, server_cert_bytes, server_key_bytes)
+            # Read certificate contents as bytes
+            ca_cert_bytes = ca_cert.read_bytes()
+            server_cert_bytes = server_cert.read_bytes()
+            server_key_bytes = server_key.read_bytes()
+            
+            ssl_config = (
+                ca_cert_bytes,
+                server_cert_bytes,
+                server_key_bytes,
+            )
+            print(f"[Server] ✓ mTLS configured successfully")
+        else:
+            print(f"\n[Server] ⚠️  SSL certificates not found at {cert_path}")
+            print(f"[Server] ⚠️  Falling back to insecure connection")
+            enable_ssl = False
     
     # Start server
     print(f"\n[Server] Starting Flower server...")
     print(f"[Server] Waiting for {min_clients} clients to connect...\n")
     
     try:
-        fl.server.start_server(
-            server_address=server_address,
-            config=config,
-            strategy=strategy,
-        )
+        if enable_ssl and ssl_config:
+            fl.server.start_server(
+                server_address=server_address,
+                config=config,
+                strategy=strategy,
+                certificates=ssl_config,
+            )
+        else:
+            fl.server.start_server(
+                server_address=server_address,
+                config=config,
+                strategy=strategy,
+            )
         
         print("\n[Server] ✓ FL training complete!")
         print(f"[Server] Total rounds: {len(strategy.get_round_history())}")
@@ -120,6 +173,10 @@ def main():
     num_epochs = int(os.getenv("NUM_EPOCHS", "2"))
     learning_rate = float(os.getenv("LEARNING_RATE", "0.001"))
     optimizer = os.getenv("OPTIMIZER", "adam")
+    enable_ssl = os.getenv("ENABLE_SSL", "true").lower() == "true"
+    certificates_path = os.getenv("CERTIFICATES_PATH", "/certificates")
+    signature_policy = os.getenv("SIGNATURE_POLICY", "log")
+    min_valid_signatures = float(os.getenv("MIN_VALID_SIGNATURES", "0.8"))
     
     # Start server
     start_flower_server(
@@ -136,6 +193,10 @@ def main():
         num_epochs=num_epochs,
         learning_rate=learning_rate,
         optimizer=optimizer,
+        enable_ssl=enable_ssl,
+        certificates_path=certificates_path,
+        signature_policy=signature_policy,
+        min_valid_signatures=min_valid_signatures,
     )
 
 
