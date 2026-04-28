@@ -2,57 +2,139 @@
 import { useEffect, useState } from 'react';
 import { 
   Box, 
-  Container, 
-  Grid, 
-  Paper, 
-  Typography, 
   Card, 
-  CardContent,
+  CardContent, 
+  Typography,
   CircularProgress,
-  Alert
+  Alert,
+  Container,
 } from '@mui/material';
-import {
-  Folder as FolderIcon,
-  Psychology as PsychologyIcon,
-  Hub as HubIcon,
-  Storage as StorageIcon,
-  Work as WorkIcon,
-  Security as SecurityIcon,
-} from '@mui/icons-material';
-import Link from 'next/link';
 import Layout from '@/components/Layout';
 import ProtectedRoute from '@/components/ProtectedRoute';
+import SectionHeader from '@/components/SectionHeader';
+import JobsTable from '@/components/JobsTable';
+import MetricsCards from '@/components/MetricsCards';
 import { useAuth } from '@/contexts/AuthContext';
 
+interface Model {
+  model_id: string;
+  model_name: string;
+  version: string;
+  type: string;
+  metrics?: {
+    accuracy?: number;
+    f1?: number;
+    auc?: number;
+    sensitivity?: number;
+    specificity?: number;
+  };
+}
+
+interface Job {
+  job_id: string;
+  job_type: string;
+  status: string;
+  result?: any;
+  created_at: string;
+}
+
+interface NodeData {
+  healthy: boolean;
+  uptime_sec: number;
+  disk: {
+    used_gb: number;
+    total_gb: number;
+  };
+}
+
 export default function DashboardPage() {
+  const [node, setNode] = useState<NodeData>({ healthy: true, uptime_sec: 0, disk: { used_gb: 0, total_gb: 0 } });
   const [nodeStatus, setNodeStatus] = useState<any>(null);
+  const [models, setModels] = useState<Model[]>([]);
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [fedRounds, setFedRounds] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { token } = useAuth();
 
   useEffect(() => {
     if (token) {
-      fetchNodeStatus();
-      const interval = setInterval(fetchNodeStatus, 10000); // Refresh every 10s
+      fetchDashboardData();
+      const interval = setInterval(fetchDashboardData, 10000);
       return () => clearInterval(interval);
     }
   }, [token]);
 
-  const fetchNodeStatus = async () => {
+  const fetchDashboardData = async () => {
     try {
       const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8001';
-      const response = await fetch(`${apiBase}/api/node/status`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
+      
+      // Fetch node status
+      const statusResponse = await fetch(`${apiBase}/api/node/status`, {
+        headers: { 'Authorization': `Bearer ${token}` },
       });
-      
-      if (!response.ok) {
-        throw new Error('Failed to fetch node status');
+      if (statusResponse.ok) {
+        const statusData = await statusResponse.json();
+        setNodeStatus(statusData);
+        setNode({
+          healthy: statusData.healthy || true,
+          uptime_sec: statusData.uptime_seconds || 0,
+          disk: { 
+            used_gb: statusData.disk_used_gb || 0, 
+            total_gb: statusData.disk_total_gb || 0 
+          }
+        });
       }
-      
-      const data = await response.json();
-      setNodeStatus(data);
+
+      // Fetch models
+      try {
+        const modelsResponse = await fetch(`${apiBase}/api/models/registry`, {
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        if (modelsResponse.ok) {
+          const modelsData = await modelsResponse.json();
+          // API returns object with models array
+          const modelsList = Array.isArray(modelsData) ? modelsData : (modelsData.models || []);
+          setModels(modelsList);
+        }
+      } catch (err) {
+        console.error('Failed to fetch models:', err);
+      }
+
+      // Fetch recent jobs
+      try {
+        const jobsResponse = await fetch(`${apiBase}/api/jobs/list?limit=5`, {
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        if (jobsResponse.ok) {
+          const jobsData = await jobsResponse.json();
+          // API returns object with jobs array
+          const jobsList = Array.isArray(jobsData) ? jobsData : (jobsData.jobs || []);
+          setJobs(jobsList.slice(0, 5));
+        }
+      } catch (err) {
+        console.error('Failed to fetch recent jobs:', err);
+      }
+
+      // Fetch federated rounds history
+      try {
+        const fedResponse = await fetch(`${apiBase}/api/federated/history`, {
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        if (fedResponse.ok) {
+          const fedData = await fedResponse.json();
+          // Get the most recent round
+          if (Array.isArray(fedData) && fedData.length > 0) {
+            setFedRounds(fedData);
+          } else {
+            setFedRounds([]);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch federated history:', err);
+        setFedRounds([]);
+      }
+
       setError(null);
     } catch (err: any) {
       setError(err.message);
@@ -61,225 +143,197 @@ export default function DashboardPage() {
     }
   };
 
+  const deployed = Array.isArray(models) ? models.find(m => m.type === 'deployed') : null;
+  const lastRound = Array.isArray(fedRounds) && fedRounds.length > 0 ? fedRounds[0] : null;
+
   return (
     <ProtectedRoute>
-      <Layout nodeId={nodeStatus?.node_id}>
-      <Container maxWidth="lg">
-          <Typography variant="h4" gutterBottom>
-            Dashboard
-          </Typography>
-
+      <Layout nodeId="node1">
+        <Container maxWidth="lg" sx={{ py: 4 }}>
           {error && (
-            <Alert severity="error" sx={{ mb: 2 }}>
+            <Alert severity="error" sx={{ mb: 3 }}>
               {error}
             </Alert>
           )}
 
           {loading ? (
-            <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'center', mt: 8 }}>
               <CircularProgress />
             </Box>
           ) : (
-            <>
-              {/* Node Info */}
-              <Paper sx={{ p: 2, mb: 3 }}>
-                <Typography variant="h6" gutterBottom>
-                  Node Information
+            <Box>
+              <SectionHeader 
+                title="Dashboard" 
+                subtitle="Node status, deployed model, and recent activity." 
+              />
+
+              {/* Top 3 Cards */}
+              <Box 
+                sx={{ 
+                  display: 'grid', 
+                  gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', 
+                  gap: 2, 
+                  mb: 2 
+                }}
+              >
+                <Card sx={{ borderRadius: 3 }}>
+                  <CardContent>
+                    <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                      Node Health
+                    </Typography>
+                    <Typography variant="h6" sx={{ fontWeight: 800, mt: 0.5 }}>
+                      {node.healthy ? 'Healthy' : 'Down'}
+                    </Typography>
+                    <Typography variant="body2" sx={{ mt: 1, color: 'text.secondary' }}>
+                      Uptime: {Math.floor(node.uptime_sec / 3600)}h • Disk: {node.disk.used_gb}/{node.disk.total_gb} GB
+                    </Typography>
+                  </CardContent>
+                </Card>
+
+                <Card sx={{ borderRadius: 3 }}>
+                  <CardContent>
+                    <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                      Deployed Model
+                    </Typography>
+                    <Typography variant="h6" sx={{ fontWeight: 800, mt: 0.5 }}>
+                      {deployed ? `${deployed.model_name} ${deployed.version}` : 'None'}
+                    </Typography>
+                    <Typography variant="body2" sx={{ mt: 1, color: 'text.secondary' }}>
+                      {deployed ? `Hash: ${deployed.model_id.substring(0, 8)}...` : 'Promote a candidate model to deploy.'}
+                    </Typography>
+                  </CardContent>
+                </Card>
+
+                <Card sx={{ borderRadius: 3 }}>
+                  <CardContent>
+                    <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                      Federated
+                    </Typography>
+                    <Typography variant="h6" sx={{ fontWeight: 800, mt: 0.5 }}>
+                      {lastRound ? lastRound.round_id : 'No rounds yet'}
+                    </Typography>
+                    <Typography variant="body2" sx={{ mt: 1, color: 'text.secondary' }}>
+                      {lastRound ? `Status: ${lastRound.status}` : 'Pull a plan to start.'}
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Box>
+
+              {/* Key Metrics */}
+              <Box sx={{ mb: 2 }}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 1 }}>
+                  Key metrics (deployed model)
                 </Typography>
-                <Grid container spacing={2}>
-                  <Grid item={true} xs={12} sm={6} md={3}>
-                    <Typography variant="body2" color="text.secondary">
-                      Node ID
-                    </Typography>
-                    <Typography variant="h6">
-                      {nodeStatus?.node_id || 'N/A'}
-                    </Typography>
-                  </Grid>
-                  <Grid item={true} xs={12} sm={6} md={3}>
-                    <Typography variant="body2" color="text.secondary">
-                      Device
-                    </Typography>
-                    <Typography variant="h6">
-                      {nodeStatus?.device || 'N/A'}
-                    </Typography>
-                  </Grid>
-                  <Grid item={true} xs={12} sm={6} md={3}>
-                    <Typography variant="body2" color="text.secondary">
-                      Storage
-                    </Typography>
-                    <Typography variant="h6">
-                      {nodeStatus?.storage_root || 'N/A'}
-                    </Typography>
-                  </Grid>
-                  <Grid item={true} xs={12} sm={6} md={3}>
-                    <Typography variant="body2" color="text.secondary">
-                      Central URL
-                    </Typography>
-                    <Typography variant="body2">
-                      {nodeStatus?.central_url || 'N/A'}
-                    </Typography>
-                  </Grid>
-                </Grid>
-              </Paper>
+                <MetricsCards metrics={deployed?.metrics} />
+              </Box>
 
               {/* Statistics Cards */}
-              <Grid container spacing={3}>
-                {/* Models */}
-                <Grid item={true} xs={12} md={4}>
-                  <Card>
+              <Box sx={{ mb: 2 }}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 1 }}>
+                  Node statistics
+                </Typography>
+                <Box
+                  sx={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                    gap: 2,
+                  }}
+                >
+                  {/* Models Card */}
+                  <Card sx={{ borderRadius: 3 }}>
                     <CardContent>
-                      <Typography color="text.secondary" gutterBottom>
+                      <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1, fontWeight: 600 }}>
                         Models
                       </Typography>
-                      <Typography variant="h4">
-                        {nodeStatus?.models ? 
-                          Object.values(nodeStatus.models).reduce((a: any, b: any) => a + b, 0) : 0}
-                      </Typography>
-                      <Box sx={{ mt: 2 }}>
-                        <Typography variant="body2">
-                          Candidate: {nodeStatus?.models?.candidate || 0}
-                        </Typography>
-                        <Typography variant="body2">
-                          Deployed: {nodeStatus?.models?.deployed || 0}
-                        </Typography>
-                        <Typography variant="body2">
-                          Archived: {nodeStatus?.models?.archived || 0}
-                        </Typography>
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', minHeight: '32px' }}>
+                          <Typography variant="body2" sx={{ lineHeight: 1.2 }}>Candidate</Typography>
+                          <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
+                            {nodeStatus?.models?.candidate || 0}
+                          </Typography>
+                        </Box>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', minHeight: '32px' }}>
+                          <Typography variant="body2" sx={{ lineHeight: 1.2 }}>Deployed</Typography>
+                          <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
+                            {nodeStatus?.models?.deployed || 0}
+                          </Typography>
+                        </Box>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', minHeight: '32px' }}>
+                          <Typography variant="body2" sx={{ lineHeight: 1.2 }}>Archived</Typography>
+                          <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
+                            {nodeStatus?.models?.archived || 0}
+                          </Typography>
+                        </Box>
                       </Box>
                     </CardContent>
                   </Card>
-                </Grid>
 
-                {/* Jobs */}
-                <Grid item={true} xs={12} md={4}>
-                  <Card>
+                  {/* Jobs Card */}
+                  <Card sx={{ borderRadius: 3 }}>
                     <CardContent>
-                      <Typography color="text.secondary" gutterBottom>
+                      <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1, fontWeight: 600 }}>
                         Jobs
                       </Typography>
-                      <Typography variant="h4">
-                        {nodeStatus?.jobs ? 
-                          Object.values(nodeStatus.jobs).reduce((a: any, b: any) => a + b, 0) : 0}
-                      </Typography>
-                      <Box sx={{ mt: 2 }}>
-                        <Typography variant="body2">
-                          Pending: {nodeStatus?.jobs?.pending || 0}
-                        </Typography>
-                        <Typography variant="body2">
-                          Running: {nodeStatus?.jobs?.running || 0}
-                        </Typography>
-                        <Typography variant="body2">
-                          Completed: {nodeStatus?.jobs?.completed || 0}
-                        </Typography>
-                        <Typography variant="body2">
-                          Failed: {nodeStatus?.jobs?.failed || 0}
-                        </Typography>
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', minHeight: '32px' }}>
+                          <Typography variant="body2" sx={{ lineHeight: 1.2 }}>Pending</Typography>
+                          <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
+                            {nodeStatus?.jobs?.pending || 0}
+                          </Typography>
+                        </Box>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', minHeight: '32px' }}>
+                          <Typography variant="body2" sx={{ lineHeight: 1.2 }}>Running</Typography>
+                          <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
+                            {nodeStatus?.jobs?.running || 0}
+                          </Typography>
+                        </Box>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', minHeight: '32px' }}>
+                          <Typography variant="body2" sx={{ lineHeight: 1.2 }}>Completed</Typography>
+                          <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
+                            {nodeStatus?.jobs?.completed || 0}
+                          </Typography>
+                        </Box>
                       </Box>
                     </CardContent>
                   </Card>
-                </Grid>
 
-                {/* Datasets */}
-                <Grid item={true} xs={12} md={4}>
-                  <Card>
+                  {/* Datasets Card */}
+                  <Card sx={{ borderRadius: 3 }}>
                     <CardContent>
-                      <Typography color="text.secondary" gutterBottom>
+                      <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1, fontWeight: 600 }}>
                         Datasets
                       </Typography>
-                      <Typography variant="h4">
-                        {nodeStatus?.datasets || 0}
-                      </Typography>
-                      <Box sx={{ mt: 2 }}>
-                        <Typography variant="body2" color="text.secondary">
-                          Total datasets available
-                        </Typography>
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', minHeight: '32px' }}>
+                          <Typography variant="body2" sx={{ lineHeight: 1.2 }}>Total datasets</Typography>
+                          <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
+                            {nodeStatus?.datasets || 0}
+                          </Typography>
+                        </Box>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', minHeight: '32px' }}>
+                          <Typography variant="body2" sx={{ lineHeight: 1.2 }}>Active</Typography>
+                          <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
+                            {nodeStatus?.active_datasets || 0}
+                          </Typography>
+                        </Box>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', minHeight: '32px' }}>
+                          <Typography variant="body2" sx={{ color: 'transparent', lineHeight: 1.2 }}>-</Typography>
+                          <Typography variant="h6" sx={{ fontWeight: 700, color: 'transparent', lineHeight: 1.2 }}>
+                            0
+                          </Typography>
+                        </Box>
                       </Box>
                     </CardContent>
                   </Card>
-                </Grid>
-              </Grid>
+                </Box>
+              </Box>
 
-              {/* Quick Actions */}
-              <Paper sx={{ p: 2, mt: 3 }}>
-                <Typography variant="h6" gutterBottom>
-                  Quick Actions
-                </Typography>
-                <Grid container spacing={2}>
-                  <Grid item={true}>
-                    <Link href="/datasets" style={{ textDecoration: 'none' }}>
-                      <Card sx={{ minWidth: 150, cursor: 'pointer', '&:hover': { bgcolor: 'action.hover' } }}>
-                        <CardContent>
-                          <FolderIcon sx={{ fontSize: 40, color: 'primary.main' }} />
-                          <Typography variant="body1" sx={{ mt: 1 }}>
-                            Datasets
-                          </Typography>
-                        </CardContent>
-                      </Card>
-                    </Link>
-                  </Grid>
-                  <Grid item={true}>
-                    <Link href="/federated" style={{ textDecoration: 'none' }}>
-                      <Card sx={{ minWidth: 150, cursor: 'pointer', '&:hover': { bgcolor: 'action.hover' } }}>
-                        <CardContent>
-                          <HubIcon sx={{ fontSize: 40, color: 'primary.main' }} />
-                          <Typography variant="body1" sx={{ mt: 1 }}>
-                            Federated
-                          </Typography>
-                        </CardContent>
-                      </Card>
-                    </Link>
-                  </Grid>
-                  <Grid item={true}>
-                    <Link href="/models" style={{ textDecoration: 'none' }}>
-                      <Card sx={{ minWidth: 150, cursor: 'pointer', '&:hover': { bgcolor: 'action.hover' } }}>
-                        <CardContent>
-                          <StorageIcon sx={{ fontSize: 40, color: 'primary.main' }} />
-                          <Typography variant="body1" sx={{ mt: 1 }}>
-                            Models
-                          </Typography>
-                        </CardContent>
-                      </Card>
-                    </Link>
-                  </Grid>
-                  <Grid item={true}>
-                    <Link href="/inference" style={{ textDecoration: 'none' }}>
-                      <Card sx={{ minWidth: 150, cursor: 'pointer', '&:hover': { bgcolor: 'action.hover' } }}>
-                        <CardContent>
-                          <PsychologyIcon sx={{ fontSize: 40, color: 'primary.main' }} />
-                          <Typography variant="body1" sx={{ mt: 1 }}>
-                            Inference
-                          </Typography>
-                        </CardContent>
-                      </Card>
-                    </Link>
-                  </Grid>
-                  <Grid item={true}>
-                    <Link href="/jobs" style={{ textDecoration: 'none' }}>
-                      <Card sx={{ minWidth: 150, cursor: 'pointer', '&:hover': { bgcolor: 'action.hover' } }}>
-                        <CardContent>
-                          <WorkIcon sx={{ fontSize: 40, color: 'primary.main' }} />
-                          <Typography variant="body1" sx={{ mt: 1 }}>
-                            Jobs
-                          </Typography>
-                        </CardContent>
-                      </Card>
-                    </Link>
-                  </Grid>
-                  <Grid item={true}>
-                    <Link href="/audit" style={{ textDecoration: 'none' }}>
-                      <Card sx={{ minWidth: 150, cursor: 'pointer', '&:hover': { bgcolor: 'action.hover' } }}>
-                        <CardContent>
-                          <SecurityIcon sx={{ fontSize: 40, color: 'primary.main' }} />
-                          <Typography variant="body1" sx={{ mt: 1 }}>
-                            Audit
-                          </Typography>
-                        </CardContent>
-                      </Card>
-                    </Link>
-                  </Grid>
-                </Grid>
-              </Paper>
-            </>
+              {/* Recent Jobs */}
+              <Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 1 }}>
+                Recent jobs
+              </Typography>
+              <JobsTable jobs={jobs} />
+            </Box>
           )}
         </Container>
       </Layout>

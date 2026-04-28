@@ -4,6 +4,7 @@ import { ThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import theme from './theme';
 import { AuthProvider } from '@/contexts/AuthContext';
+import { fontConfig } from '@/config/fonts';
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -18,6 +19,16 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
+      <head>
+        {/* Load Google Fonts if configured */}
+        {fontConfig.googleFontsUrl && (
+          <link
+            rel="stylesheet"
+            href={fontConfig.googleFontsUrl}
+            crossOrigin="anonymous"
+          />
+        )}
+      </head>
       <body>
         <AppRouterCacheProvider>
           <ThemeProvider theme={theme}>

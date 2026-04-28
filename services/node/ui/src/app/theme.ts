@@ -1,5 +1,6 @@
 'use client';
 import { createTheme } from '@mui/material/styles';
+import { fontConfig } from '@/config/fonts';
 
 const theme = createTheme({
   palette: {
@@ -15,7 +16,12 @@ const theme = createTheme({
     },
   },
   typography: {
-    fontFamily: 'var(--font-geist-sans)',
+    fontFamily: fontConfig.family,
+    // Font weights for different text variants
+    fontWeightLight: 300,
+    fontWeightRegular: 400,
+    fontWeightMedium: 500,
+    fontWeightBold: 700,
   },
 });
 

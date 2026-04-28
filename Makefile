@@ -1,20 +1,16 @@
-.PHONY: up down logs build restart status test-api test-central clean help up-gpu down-gpu
+.PHONY: up down logs build restart status test-api test-central clean help up-gpu down-gpu up-cpu
 
-# Start all services (CPU mode)
+# Start all services
 up:
 	docker compose up -d
 
-# Start all services with GPU support
-up-gpu:
-	docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+# Start all services (CPU mode - explicit)
+up-cpu:
+	docker compose -f docker-compose-cpu.yml up -d
 
 # Start all services with build
 up-build:
 	docker compose up -d --build
-
-# Start all services with GPU and build
-up-gpu-build:
-	docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
 
 # Stop all services
 down:
@@ -178,6 +174,9 @@ help:
 	@echo "Other:"
 	@echo "  make restart         - Restart all services"
 	@echo "  make clean           - Clean up containers and volumes"
+	@echo "  make demo            - Run FL workflow demo"
+	@echo "  make create-datasets - Create synthetic test datasets"
+	@echo "  make help            - Show this help message"containers and volumes"
 	@echo "  make demo            - Run FL workflow demo"
 	@echo "  make create-datasets - Create synthetic test datasets"
 	@echo "  make help            - Show this help message"
