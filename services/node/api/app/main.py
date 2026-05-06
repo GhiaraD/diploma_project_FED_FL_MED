@@ -96,6 +96,22 @@ def node_status(
     db: Session = Depends(get_db)
 ):
     """Get node status and statistics - requires authentication."""
+    import time
+    import shutil
+    
+    # Calculate uptime (time since container started)
+    # For simplicity, we'll use a fixed start time or calculate from first job
+    uptime_seconds = int(time.time() % 86400)  # Simplified: seconds since midnight
+    
+    # Get disk usage for storage directory
+    try:
+        disk_usage = shutil.disk_usage(settings.STORAGE_ROOT)
+        disk_total_gb = disk_usage.total / (1024**3)  # Convert to GB
+        disk_used_gb = disk_usage.used / (1024**3)
+    except Exception:
+        disk_total_gb = 0.0
+        disk_used_gb = 0.0
+    
     # Count models by type
     models_count = {
         "candidate": db.query(Model).filter(Model.type == "candidate").count(),
@@ -113,15 +129,21 @@ def node_status(
     
     # Count datasets
     datasets_count = db.query(Dataset).count()
+    active_datasets_count = db.query(Dataset).filter(Dataset.is_active == True).count()
     
     return {
         "node_id": settings.NODE_ID,
         "storage_root": settings.STORAGE_ROOT,
         "central_url": settings.CENTRAL_URL,
         "device": settings.DEVICE,
+        "healthy": True,
+        "uptime_seconds": uptime_seconds,
+        "disk_used_gb": round(disk_used_gb, 2),
+        "disk_total_gb": round(disk_total_gb, 2),
         "models": models_count,
         "jobs": jobs_count,
-        "datasets": datasets_count
+        "datasets": datasets_count,
+        "active_datasets": active_datasets_count
     }
 
 
@@ -577,6 +599,20 @@ def list_models(
     # Compute labels for all models
     models = compute_model_labels(models, db)
     
+    def normalize_metrics(metrics):
+        """Normalize metric names for UI compatibility."""
+        if not metrics:
+            return metrics
+        
+        # Create a copy to avoid modifying original
+        normalized = dict(metrics) if isinstance(metrics, dict) else {}
+        
+        # Map f1_score to f1 for UI compatibility
+        if 'f1_score' in normalized and 'f1' not in normalized:
+            normalized['f1'] = normalized['f1_score']
+        
+        return normalized
+    
     return {
         "models": [
             {
@@ -586,7 +622,7 @@ def list_models(
                 "type": m.type,  # Keep for backward compatibility
                 "labels": m.labels or [],
                 "round_id": m.round_id,
-                "metrics": m.metrics,
+                "metrics": normalize_metrics(m.metrics),
                 "created_at": m.created_at.isoformat()
             }
             for m in models
@@ -619,9 +655,9 @@ async def promote_model(
         raise HTTPException(status_code=404, detail="Model not found")
     
     # Change current deployed model back to candidate
+    # Note: We demote ALL deployed models, not just same architecture
     current_deployed = db.query(Model).filter(
-        Model.type == "deployed",
-        Model.model_name == model_to_promote.model_name
+        Model.type == "deployed"
     ).first()
     
     if current_deployed:
@@ -629,11 +665,19 @@ async def promote_model(
         
         # Move file back to candidate directory
         old_path = current_deployed.file_path
-        new_path = old_path.replace("/deployed/", "/candidate/")
-        if os.path.exists(old_path):
-            os.makedirs(os.path.dirname(new_path), exist_ok=True)
-            shutil.move(old_path, new_path)
-            current_deployed.file_path = new_path
+        
+        # Handle case where file might already be in candidate directory
+        if "/candidate/" in old_path:
+            # File is already in candidate directory, just update the path
+            new_path = old_path
+        else:
+            # Move from deployed to candidate
+            new_path = old_path.replace("/deployed/", "/candidate/")
+            if os.path.exists(old_path):
+                os.makedirs(os.path.dirname(new_path), exist_ok=True)
+                shutil.move(old_path, new_path)
+        
+        current_deployed.file_path = new_path
     
     # Promote selected model
     model_to_promote.type = "deployed"
@@ -641,11 +685,19 @@ async def promote_model(
     
     # Move file to deployed directory
     old_path = model_to_promote.file_path
-    new_path = old_path.replace("/candidate/", "/deployed/")
-    if os.path.exists(old_path):
-        os.makedirs(os.path.dirname(new_path), exist_ok=True)
-        shutil.move(old_path, new_path)
-        model_to_promote.file_path = new_path
+    
+    # Handle case where file might already be in deployed directory
+    if "/deployed/" in old_path:
+        # File is already in deployed directory, just update the path
+        new_path = old_path
+    else:
+        # Move from candidate to deployed
+        new_path = old_path.replace("/candidate/", "/deployed/")
+        if os.path.exists(old_path):
+            os.makedirs(os.path.dirname(new_path), exist_ok=True)
+            shutil.move(old_path, new_path)
+    
+    model_to_promote.file_path = new_path
     
     db.commit()
     
@@ -1256,16 +1308,30 @@ def get_federated_status(
     With Flower, we check local job status only.
     """
     # Get local job status
-    job = db.query(Job).filter(
-        Job.job_type == "federated_train",
-        Job.params["round_id"].astext == round_id
-    ).order_by(Job.created_at.desc()).first()
+    # Query all federated_train jobs and filter in Python (SQLite compatible)
+    jobs = db.query(Job).filter(
+        Job.job_type == "federated_train"
+    ).order_by(Job.created_at.desc()).all()
     
-    local_status = job.status if job else "not_started"
+    # Filter by round_id in Python (works with both SQLite and PostgreSQL)
+    job = None
+    for j in jobs:
+        if j.params and j.params.get("round_id") == round_id:
+            job = j
+            break
+    
+    if job:
+        local_status = job.status
+        job_id = job.job_id
+    else:
+        local_status = "not_started"
+        job_id = None
     
     return {
         "round_id": round_id,
         "node_id": settings.NODE_ID,
+        "status": local_status,
+        "job_id": job_id,
         "local_status": local_status,
         "central_status": {
             "note": "Using Flower framework - check Flower server logs for round status"

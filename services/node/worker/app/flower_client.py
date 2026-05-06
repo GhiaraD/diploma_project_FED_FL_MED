@@ -2,15 +2,26 @@
 Flower Client for Fed-Med-FL Node Worker
 
 This replaces the custom FL client with Flower's NumPyClient.
+Supports Differential Privacy via Opacus.
 """
 import flwr as fl
 import torch
 import torch.nn as nn
 import sys
 import os
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 import numpy as np
 from pathlib import Path
+
+# Differential Privacy imports
+try:
+    from opacus import PrivacyEngine
+    from opacus.validators import ModuleValidator
+    from opacus.utils.batch_memory_manager import BatchMemoryManager
+    OPACUS_AVAILABLE = True
+except ImportError:
+    OPACUS_AVAILABLE = False
+    print("⚠️  Opacus not available. Differential Privacy will be disabled.")
 
 # Add node_core to path
 sys.path.insert(0, '/app/shared/python/node_core')
@@ -56,6 +67,13 @@ class FedMedClient(fl.client.NumPyClient):
         batch_size: int = 32,
         enable_signing: bool = True,
         certificates_path: str = "/certificates",
+        # Differential Privacy parameters
+        enable_dp: bool = False,
+        dp_target_epsilon: float = 1.0,
+        dp_target_delta: float = 1e-5,
+        dp_noise_multiplier: float = 1.0,
+        dp_max_grad_norm: float = 1.0,
+        dp_max_epochs: int = 10,
     ):
         """
         Initialize Flower client.
@@ -69,6 +87,12 @@ class FedMedClient(fl.client.NumPyClient):
             batch_size: Batch size for training
             enable_signing: Enable payload signing
             certificates_path: Path to certificates
+            enable_dp: Enable Differential Privacy
+            dp_target_epsilon: Target epsilon for DP
+            dp_target_delta: Target delta for DP
+            dp_noise_multiplier: Noise multiplier for DP
+            dp_max_grad_norm: Maximum gradient norm for clipping
+            dp_max_epochs: Maximum epochs for privacy accounting
         """
         self.node_id = node_id
         self.model_name = model_name
@@ -78,9 +102,25 @@ class FedMedClient(fl.client.NumPyClient):
         self.batch_size = batch_size
         self.enable_signing = enable_signing
         
+        # Differential Privacy configuration
+        self.enable_dp = enable_dp and OPACUS_AVAILABLE
+        self.dp_target_epsilon = dp_target_epsilon
+        self.dp_target_delta = dp_target_delta
+        self.dp_noise_multiplier = dp_noise_multiplier
+        self.dp_max_grad_norm = dp_max_grad_norm
+        self.dp_max_epochs = dp_max_epochs
+        self.privacy_engine = None
+        
+        if enable_dp and not OPACUS_AVAILABLE:
+            print(f"[{node_id}] ⚠️  DP requested but Opacus not available. DP disabled.")
+        
         # Initialize model
         self.model = get_model(model_name, num_classes=num_classes, pretrained=False)
         self.model.to(device)
+        
+        # Validate model for DP if enabled
+        if self.enable_dp:
+            self._validate_model_for_dp()
         
         # Initialize payload signer
         self.signer = None
@@ -108,6 +148,12 @@ class FedMedClient(fl.client.NumPyClient):
         print(f"[{node_id}] Dataset: {dataset_path}")
         print(f"[{node_id}] Device: {device}")
         print(f"[{node_id}] Signing: {'Enabled' if self.enable_signing else 'Disabled'}")
+        print(f"[{node_id}] Differential Privacy: {'Enabled' if self.enable_dp else 'Disabled'}")
+        if self.enable_dp:
+            print(f"[{node_id}]   Target ε: {self.dp_target_epsilon}")
+            print(f"[{node_id}]   Target δ: {self.dp_target_delta}")
+            print(f"[{node_id}]   Noise multiplier: {self.dp_noise_multiplier}")
+            print(f"[{node_id}]   Max grad norm: {self.dp_max_grad_norm}")
     
     def _load_data(self):
         """Load and prepare datasets."""
@@ -137,6 +183,34 @@ class FedMedClient(fl.client.NumPyClient):
         print(f"  - Validation samples: {len(val_dataset)}")
         
         return train_loader, val_loader
+    
+    def _validate_model_for_dp(self):
+        """Validate and fix model for Differential Privacy compatibility."""
+        if not self.enable_dp or not OPACUS_AVAILABLE:
+            return
+        
+        print(f"[{self.node_id}] 🔒 Validating model for DP compatibility...")
+        
+        try:
+            errors = ModuleValidator.validate(self.model, strict=False)
+            if errors:
+                print(f"[{self.node_id}] ⚠️  Model has {len(errors)} compatibility issue(s):")
+                for i, error in enumerate(errors[:3], 1):  # Show first 3
+                    print(f"  {i}. {error}")
+                if len(errors) > 3:
+                    print(f"  ... and {len(errors) - 3} more")
+                
+                # Try to fix automatically
+                print(f"[{self.node_id}] 🔧 Attempting automatic fix...")
+                self.model = ModuleValidator.fix(self.model)
+                self.model.to(self.device)
+                print(f"[{self.node_id}] ✓ Model fixed for DP compatibility")
+            else:
+                print(f"[{self.node_id}] ✓ Model is DP-compatible")
+        except Exception as e:
+            print(f"[{self.node_id}] ⚠️  DP validation failed: {e}")
+            print(f"[{self.node_id}] ⚠️  Disabling DP for this client")
+            self.enable_dp = False
     
     def get_parameters(self, config: Dict) -> List[np.ndarray]:
         """
@@ -209,18 +283,68 @@ class FedMedClient(fl.client.NumPyClient):
         optimizer = get_optimizer(self.model, optimizer_name, lr=learning_rate)
         scheduler = get_scheduler(optimizer, 'cosine', num_epochs=num_epochs)
         
-        # Train
-        history = train_model(
-            model=self.model,
-            train_loader=self.train_loader,
-            val_loader=self.val_loader,
-            criterion=criterion,
-            optimizer=optimizer,
-            device=self.device,
-            num_epochs=num_epochs,
-            scheduler=scheduler,
-            verbose=True
-        )
+        # Setup Differential Privacy if enabled
+        train_loader = self.train_loader
+        if self.enable_dp and OPACUS_AVAILABLE:
+            print(f"[{self.node_id}] 🔒 Enabling Differential Privacy (DP-SGD)...")
+            
+            try:
+                # Disable inplace operations for PyTorch 2.x compatibility with Opacus
+                # This fixes the "view and is being modified inplace" error
+                for m in self.model.modules():
+                    if hasattr(m, "inplace"):
+                        m.inplace = False
+                print(f"[{self.node_id}] ✓ Disabled inplace operations for DP compatibility")
+                
+                privacy_engine = PrivacyEngine(secure_mode=False)  # Disable secure_mode for compatibility
+                
+                self.model, optimizer, train_loader = privacy_engine.make_private(
+                    module=self.model,
+                    optimizer=optimizer,
+                    data_loader=self.train_loader,
+                    noise_multiplier=self.dp_noise_multiplier,
+                    max_grad_norm=self.dp_max_grad_norm,
+                )
+                
+                self.privacy_engine = privacy_engine
+                print(f"[{self.node_id}] ✓ DP-SGD enabled successfully")
+                print(f"[{self.node_id}]   Noise multiplier: {self.dp_noise_multiplier}")
+                print(f"[{self.node_id}]   Max grad norm: {self.dp_max_grad_norm}")
+                print(f"[{self.node_id}]   Secure mode: False (for compatibility)")
+            except Exception as e:
+                print(f"[{self.node_id}] ⚠️  Failed to enable DP: {e}")
+                print(f"[{self.node_id}] ⚠️  Continuing without DP")
+                self.enable_dp = False
+                self.privacy_engine = None
+        else:
+            # Enable inplace operations for memory efficiency when DP is disabled
+            if not self.enable_dp:
+                for m in self.model.modules():
+                    if hasattr(m, "inplace"):
+                        m.inplace = True
+                print(f"[{self.node_id}] ✓ Enabled inplace operations for memory efficiency (DP disabled)")
+        
+        # Train with or without DP
+        if self.enable_dp and self.privacy_engine:
+            history = self._train_with_dp(
+                train_loader=train_loader,
+                criterion=criterion,
+                optimizer=optimizer,
+                scheduler=scheduler,
+                num_epochs=num_epochs
+            )
+        else:
+            history = train_model(
+                model=self.model,
+                train_loader=train_loader,
+                val_loader=self.val_loader,
+                criterion=criterion,
+                optimizer=optimizer,
+                device=self.device,
+                num_epochs=num_epochs,
+                scheduler=scheduler,
+                verbose=True
+            )
         
         # Get updated parameters
         updated_parameters = self.get_parameters({})
@@ -228,12 +352,34 @@ class FedMedClient(fl.client.NumPyClient):
         # Number of training samples
         num_samples = len(self.train_loader.dataset)
         
-        # Metrics
+        # Run final evaluation to get detailed metrics
+        final_loss, _, eval_metrics = self.evaluate(updated_parameters, {})
+        
+        # Metrics - include detailed evaluation metrics
         metrics = {
             "accuracy": history['best_val_acc'],
             "train_loss": history['train_loss'][-1],
             "val_loss": history['val_loss'][-1],
+            # Add detailed metrics from evaluation
+            "f1_score": eval_metrics.get('f1', 0),
+            "precision": eval_metrics.get('precision', 0),
+            "recall": eval_metrics.get('recall', 0),
+            "auc": eval_metrics.get('auc', 0),
         }
+        
+        # Add DP metrics if enabled
+        if self.enable_dp and self.privacy_engine:
+            try:
+                final_epsilon = self.privacy_engine.get_epsilon(delta=self.dp_target_delta)
+                metrics["dp_epsilon"] = float(final_epsilon)
+                metrics["dp_delta"] = float(self.dp_target_delta)
+                metrics["dp_enabled"] = True
+                print(f"[{self.node_id}] 🔒 Privacy spent: ε = {final_epsilon:.2f} (δ = {self.dp_target_delta})")
+            except Exception as e:
+                print(f"[{self.node_id}] ⚠️  Failed to compute epsilon: {e}")
+                metrics["dp_enabled"] = False
+        else:
+            metrics["dp_enabled"] = False
         
         # Sign parameters if enabled
         signature_package = {'signed': False}
@@ -278,6 +424,100 @@ class FedMedClient(fl.client.NumPyClient):
         print(f"{'='*70}\n")
         
         return updated_parameters, num_samples, metrics
+    
+    def _train_with_dp(
+        self,
+        train_loader,
+        criterion,
+        optimizer,
+        scheduler,
+        num_epochs: int
+    ) -> Dict:
+        """
+        Train model with Differential Privacy using Opacus.
+        
+        Args:
+            train_loader: DP-enabled data loader
+            criterion: Loss function
+            optimizer: DP-enabled optimizer
+            scheduler: Learning rate scheduler
+            num_epochs: Number of epochs
+        
+        Returns:
+            Training history dict
+        """
+        history = {
+            'train_loss': [],
+            'val_loss': [],
+            'val_acc': [],
+            'best_val_acc': 0.0
+        }
+        
+        for epoch in range(num_epochs):
+            # Training phase
+            self.model.train()
+            epoch_loss = 0.0
+            num_batches = 0
+            
+            # Use BatchMemoryManager for efficient DP training
+            with BatchMemoryManager(
+                data_loader=train_loader,
+                max_physical_batch_size=32,  # Adjust based on GPU memory
+                optimizer=optimizer
+            ) as memory_safe_loader:
+                for batch_idx, (data, target) in enumerate(memory_safe_loader):
+                    data, target = data.to(self.device), target.to(self.device)
+                    
+                    optimizer.zero_grad()
+                    output = self.model(data)
+                    loss = criterion(output, target)
+                    loss.backward()
+                    optimizer.step()
+                    
+                    epoch_loss += loss.item()
+                    num_batches += 1
+            
+            avg_train_loss = epoch_loss / num_batches if num_batches > 0 else 0.0
+            history['train_loss'].append(avg_train_loss)
+            
+            # Validation phase
+            self.model.eval()
+            val_loss = 0.0
+            correct = 0
+            total = 0
+            
+            with torch.no_grad():
+                for data, target in self.val_loader:
+                    data, target = data.to(self.device), target.to(self.device)
+                    output = self.model(data)
+                    loss = criterion(output, target)
+                    
+                    val_loss += loss.item()
+                    pred = output.argmax(dim=1, keepdim=True)
+                    correct += pred.eq(target.view_as(pred)).sum().item()
+                    total += target.size(0)
+            
+            avg_val_loss = val_loss / len(self.val_loader)
+            val_acc = correct / total if total > 0 else 0.0
+            
+            history['val_loss'].append(avg_val_loss)
+            history['val_acc'].append(val_acc)
+            
+            if val_acc > history['best_val_acc']:
+                history['best_val_acc'] = val_acc
+            
+            # Get current epsilon
+            epsilon = self.privacy_engine.get_epsilon(delta=self.dp_target_delta)
+            
+            print(f"[{self.node_id}] Epoch {epoch+1}/{num_epochs} - "
+                  f"Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}, "
+                  f"Val Acc: {val_acc:.2%}, ε: {epsilon:.2f}")
+            
+            # Step scheduler
+            if scheduler:
+                scheduler.step()
+        
+        return history
     
     def evaluate(
         self,
@@ -379,6 +619,13 @@ def start_flower_client(
     round_id: str = None,
     enable_ssl: bool = True,
     certificates_path: str = "/certificates",
+    # Differential Privacy parameters
+    enable_dp: bool = False,
+    dp_target_epsilon: float = 1.0,
+    dp_target_delta: float = 1e-5,
+    dp_noise_multiplier: float = 1.0,
+    dp_max_grad_norm: float = 1.0,
+    dp_max_epochs: int = 10,
 ):
     """
     Start Flower client and connect to server.
@@ -394,6 +641,12 @@ def start_flower_client(
         round_id: FL round identifier (for model saving)
         enable_ssl: Enable mTLS for secure communication
         certificates_path: Path to SSL certificates
+        enable_dp: Enable Differential Privacy
+        dp_target_epsilon: Target epsilon for DP
+        dp_target_delta: Target delta for DP
+        dp_noise_multiplier: Noise multiplier for DP
+        dp_max_grad_norm: Maximum gradient norm for clipping
+        dp_max_epochs: Maximum epochs for privacy accounting
     """
     print("=" * 70)
     print(f"FED-MED-FL FLOWER CLIENT - {node_id}")
@@ -403,6 +656,10 @@ def start_flower_client(
     print(f"Dataset: {dataset_path}")
     print(f"Device: {device}")
     print(f"SSL/TLS: {'Enabled (mTLS)' if enable_ssl else 'Disabled'}")
+    print(f"Differential Privacy: {'Enabled' if enable_dp else 'Disabled'}")
+    if enable_dp:
+        print(f"  Target ε: {dp_target_epsilon}")
+        print(f"  Target δ: {dp_target_delta}")
     print("=" * 70)
     
     # Create client
@@ -415,6 +672,13 @@ def start_flower_client(
         batch_size=batch_size,
         enable_signing=enable_ssl,  # Use same flag as SSL for now
         certificates_path=certificates_path,
+        # DP parameters
+        enable_dp=enable_dp,
+        dp_target_epsilon=dp_target_epsilon,
+        dp_target_delta=dp_target_delta,
+        dp_noise_multiplier=dp_noise_multiplier,
+        dp_max_grad_norm=dp_max_grad_norm,
+        dp_max_epochs=dp_max_epochs,
     )
     
     # Configure SSL/TLS if enabled
@@ -510,6 +774,14 @@ def main():
     enable_ssl = os.getenv("ENABLE_SSL", "true").lower() == "true"
     certificates_path = os.getenv("CERTIFICATES_PATH", "/certificates")
     
+    # Differential Privacy configuration
+    enable_dp = os.getenv("ENABLE_DP", "false").lower() == "true"
+    dp_target_epsilon = float(os.getenv("DP_TARGET_EPSILON", "1.0"))
+    dp_target_delta = float(os.getenv("DP_TARGET_DELTA", "1e-5"))
+    dp_noise_multiplier = float(os.getenv("DP_NOISE_MULTIPLIER", "1.0"))
+    dp_max_grad_norm = float(os.getenv("DP_MAX_GRAD_NORM", "1.0"))
+    dp_max_epochs = int(os.getenv("DP_MAX_EPOCHS", "10"))
+    
     if not dataset_path:
         raise ValueError("DATASET_PATH environment variable is required")
     
@@ -524,6 +796,13 @@ def main():
         batch_size=batch_size,
         enable_ssl=enable_ssl,
         certificates_path=certificates_path,
+        # DP parameters
+        enable_dp=enable_dp,
+        dp_target_epsilon=dp_target_epsilon,
+        dp_target_delta=dp_target_delta,
+        dp_noise_multiplier=dp_noise_multiplier,
+        dp_max_grad_norm=dp_max_grad_norm,
+        dp_max_epochs=dp_max_epochs,
     )
 
 

@@ -25,11 +25,28 @@ export default function MetricsCards({ metrics }: MetricsCardsProps) {
     );
   }
 
+  // Prioritize available metrics, fallback to common ones
   const metricsList = [
-    { label: 'F1', value: metrics.f1 },
-    { label: 'AUC', value: metrics.auc },
-    { label: 'Sensitivity', value: metrics.sensitivity },
-    { label: 'Specificity', value: metrics.specificity },
+    { 
+      label: 'Accuracy', 
+      value: metrics.accuracy,
+      format: (v: number) => `${(v * 100).toFixed(2)}%`
+    },
+    { 
+      label: 'F1 Score', 
+      value: metrics.f1,
+      format: (v: number) => v.toFixed(4)
+    },
+    { 
+      label: 'AUC', 
+      value: metrics.auc,
+      format: (v: number) => v.toFixed(4)
+    },
+    { 
+      label: 'Precision', 
+      value: metrics.precision,
+      format: (v: number) => v.toFixed(4)
+    },
   ];
 
   return (
@@ -47,7 +64,11 @@ export default function MetricsCards({ metrics }: MetricsCardsProps) {
               {metric.label}
             </Typography>
             <Typography variant="h4" sx={{ fontWeight: 600 }}>
-              {metric.value !== undefined ? metric.value.toFixed(2) : '—'}
+              {metric.value !== undefined ? metric.format(metric.value) : (
+                <Typography variant="body2" sx={{ color: 'text.secondary', fontStyle: 'italic' }}>
+                  N/A
+                </Typography>
+              )}
             </Typography>
           </CardContent>
         </Card>

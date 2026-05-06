@@ -11,7 +11,7 @@ services:
       PORT: 8081  # Management API port
       USE_FLOWER: "true"
       # Flower server config
-      FLOWER_SERVER_ADDRESS: 0.0.0.0:8080
+      FLOWER_SERVER_ADDRESS: 0.0.0.0:8082
       NUM_ROUNDS: 2
       MIN_CLIENTS: 2
       MIN_FIT_CLIENTS: 2
@@ -25,7 +25,6 @@ services:
       # SSL/TLS Configuration
       ENABLE_SSL: "false"  # Disabled for UI compatibility
       CERTIFICATES_PATH: /certificates
-      FLOWER_ENABLE_SSL: "true"  # Enable mTLS for Flower gRPC Server
       # Security Policy Configuration
       SIGNATURE_POLICY: "log"  # Options: "log", "warn", "reject"
       MIN_VALID_SIGNATURES: "0.8"  # 80% minimum valid signatures
@@ -101,10 +100,10 @@ services:
       ENABLE_SSL: "true"
       CERTIFICATES_PATH: /certificates
       # Client-side Differential Privacy Configuration
-      ENABLE_DP: "false"  # Disabled for memory optimization (in-place operations enabled)
-      DP_TARGET_EPSILON: "10.0"  # Privacy budget per round (lower = more private)
+      ENABLE_DP: "false"  # Enable client-side DP (Opacus)
+      DP_TARGET_EPSILON: "1.0"  # Privacy budget per round (lower = more private)
       DP_TARGET_DELTA: "1e-5"  # Failure probability
-      DP_NOISE_MULTIPLIER: "0.5"  # Noise scale (higher = more noise)
+      DP_NOISE_MULTIPLIER: "1.0"  # Noise scale (higher = more noise)
       DP_MAX_GRAD_NORM: "1.0"  # Gradient clipping threshold
       DP_MAX_EPOCHS: "10"  # Maximum epochs for privacy accounting
     volumes:
@@ -199,10 +198,10 @@ services:
       ENABLE_SSL: "true"
       CERTIFICATES_PATH: /certificates
       # Client-side Differential Privacy Configuration
-      ENABLE_DP: "false"  # Disabled for memory optimization (in-place operations enabled)
-      DP_TARGET_EPSILON: "10.0"  # Privacy budget per round
+      ENABLE_DP: "false"  # Enable client-side DP (Opacus)
+      DP_TARGET_EPSILON: "1.0"  # Privacy budget per round
       DP_TARGET_DELTA: "1e-5"  # Failure probability
-      DP_NOISE_MULTIPLIER: "0.5"  # Noise scale
+      DP_NOISE_MULTIPLIER: "1.0"  # Noise scale
       DP_MAX_GRAD_NORM: "1.0"  # Gradient clipping threshold
       DP_MAX_EPOCHS: "10"  # Maximum epochs for privacy accounting
     volumes:
@@ -297,10 +296,10 @@ services:
       ENABLE_SSL: "true"
       CERTIFICATES_PATH: /certificates
       # Client-side Differential Privacy Configuration
-      ENABLE_DP: "false"  # Disabled for memory optimization (in-place operations enabled)
-      DP_TARGET_EPSILON: "10.0"  # Privacy budget per round
+      ENABLE_DP: "false"  # Enable client-side DP (Opacus)
+      DP_TARGET_EPSILON: "1.0"  # Privacy budget per round
       DP_TARGET_DELTA: "1e-5"  # Failure probability
-      DP_NOISE_MULTIPLIER: "0.5"  # Noise scale
+      DP_NOISE_MULTIPLIER: "1.0"  # Noise scale
       DP_MAX_GRAD_NORM: "1.0"  # Gradient clipping threshold
       DP_MAX_EPOCHS: "10"  # Maximum epochs for privacy accounting
     volumes:

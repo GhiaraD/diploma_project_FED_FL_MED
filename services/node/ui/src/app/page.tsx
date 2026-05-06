@@ -123,9 +123,9 @@ export default function DashboardPage() {
         });
         if (fedResponse.ok) {
           const fedData = await fedResponse.json();
-          // Get the most recent round
-          if (Array.isArray(fedData) && fedData.length > 0) {
-            setFedRounds(fedData);
+          // API returns { total_rounds: number, rounds: array }
+          if (fedData.rounds && Array.isArray(fedData.rounds) && fedData.rounds.length > 0) {
+            setFedRounds(fedData.rounds);
           } else {
             setFedRounds([]);
           }

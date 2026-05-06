@@ -140,9 +140,14 @@ class NodeStatusResponse(BaseModel):
     storage_root: str
     central_url: str
     device: str
+    healthy: bool
+    uptime_seconds: int
+    disk_used_gb: float
+    disk_total_gb: float
     models: Dict[str, int]
     jobs: Dict[str, int]
     datasets: int
+    active_datasets: int
 
 
 # ============================================================================
@@ -239,6 +244,8 @@ class FederatedJoinRequest(BaseModel):
 class FederatedStatusResponse(BaseModel):
     round_id: str
     node_id: str
+    status: Optional[str] = None  # Alias for local_status for compatibility
+    job_id: Optional[str] = None
     local_status: str
     central_status: Dict[str, Any]
 

@@ -42,6 +42,10 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
         certificates_path: str = "/certificates",
         signature_policy: str = "log",  # "log", "warn", "reject"
         min_valid_signatures: float = 0.8,  # Minimum 80% must be valid
+        # Server-side Differential Privacy parameters
+        enable_server_dp: bool = False,
+        server_dp_noise_multiplier: float = 0.1,
+        server_dp_sensitivity: float = 1.0,
         **kwargs
     ):
         """
@@ -57,6 +61,11 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
             optimizer: Optimizer name
             enable_signing: Enable payload signing and verification
             certificates_path: Path to certificates
+            signature_policy: Policy for invalid signatures ("log", "warn", "reject")
+            min_valid_signatures: Minimum fraction of valid signatures
+            enable_server_dp: Enable server-side Differential Privacy
+            server_dp_noise_multiplier: Noise multiplier for server-side DP
+            server_dp_sensitivity: Sensitivity for server-side DP
             **kwargs: Additional arguments for FedAvg
         """
         super().__init__(**kwargs)
@@ -71,6 +80,11 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
         self.enable_signing = enable_signing
         self.signature_policy = signature_policy
         self.min_valid_signatures = min_valid_signatures
+        
+        # Server-side Differential Privacy configuration
+        self.enable_server_dp = enable_server_dp
+        self.server_dp_noise_multiplier = server_dp_noise_multiplier
+        self.server_dp_sensitivity = server_dp_sensitivity
         
         # Create storage directories
         self.models_dir = self.storage_path / "models"
@@ -117,6 +131,10 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
         if self.enable_signing:
             print(f"[FedMedStrategy] Signature Policy: {self.signature_policy}")
             print(f"[FedMedStrategy] Min Valid Signatures: {self.min_valid_signatures * 100:.0f}%")
+        print(f"[FedMedStrategy] Server-side DP: {'Enabled' if self.enable_server_dp else 'Disabled'}")
+        if self.enable_server_dp:
+            print(f"[FedMedStrategy]   Noise multiplier: {self.server_dp_noise_multiplier}")
+            print(f"[FedMedStrategy]   Sensitivity: {self.server_dp_sensitivity}")
     
     def configure_fit(
         self, 
@@ -159,8 +177,25 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
         Return initial global model parameters.
         
         Called once at the start of FL to initialize the global model.
+        If clients use DP, we need to fix the model for compatibility.
         """
         print("[FedMedStrategy] Initializing global model parameters...")
+        
+        # ONLY apply Opacus fixes if server-side DP is enabled
+        # This ensures model structure matches between server and clients
+        if self.enable_server_dp:
+            try:
+                from opacus.validators import ModuleValidator
+                
+                # Validate and fix model for DP compatibility
+                errors = ModuleValidator.validate(self.model, strict=False)
+                if errors:
+                    print("[FedMedStrategy] ⚠️  Model has DP compatibility issues, fixing...")
+                    self.model = ModuleValidator.fix(self.model)
+                    print("[FedMedStrategy] ✓ Model fixed for DP compatibility (BatchNorm → GroupNorm)")
+            except ImportError:
+                print("[FedMedStrategy] ⚠️  Server-side DP enabled but Opacus not available")
+                pass
         
         # Get model parameters as numpy arrays
         parameters = [val.cpu().numpy() for val in self.model.state_dict().values()]
@@ -170,6 +205,46 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
             self._save_global_model(parameters, round_num=0)
         
         return fl.common.ndarrays_to_parameters(parameters)
+    
+    def _add_dp_noise(self, parameters_list: List):
+        """
+        Add Gaussian noise to aggregated parameters for server-side DP.
+        
+        Args:
+            parameters_list: List of parameter arrays (numpy)
+        
+        Returns:
+            Parameters with added noise
+        """
+        if not self.enable_server_dp:
+            return parameters_list
+        
+        import numpy as np
+        
+        noisy_parameters = []
+        total_noise_norm = 0.0
+        
+        for param in parameters_list:
+            # Calculate noise scale based on sensitivity and noise multiplier
+            noise_scale = self.server_dp_noise_multiplier * self.server_dp_sensitivity
+            
+            # Generate Gaussian noise with same shape as parameter
+            noise = np.random.normal(
+                loc=0.0,
+                scale=noise_scale,
+                size=param.shape
+            ).astype(param.dtype)
+            
+            # Add noise to parameters
+            noisy_param = param + noise
+            noisy_parameters.append(noisy_param)
+            
+            # Track noise magnitude
+            total_noise_norm += np.linalg.norm(noise)
+        
+        print(f"[FedMedStrategy] 🔒 Added server-side DP noise (total norm: {total_noise_norm:.4f})")
+        
+        return noisy_parameters
     
     def aggregate_fit(
         self,
@@ -289,6 +364,12 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
         )
         
         if aggregated_parameters is not None:
+            # Add server-side DP noise if enabled
+            if self.enable_server_dp:
+                parameters_list = fl.common.parameters_to_ndarrays(aggregated_parameters)
+                noisy_parameters = self._add_dp_noise(parameters_list)
+                aggregated_parameters = fl.common.ndarrays_to_parameters(noisy_parameters)
+            
             # Save aggregated model
             if self.save_models:
                 parameters_list = fl.common.parameters_to_ndarrays(aggregated_parameters)
@@ -316,6 +397,32 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
                 print(f"    • Successful: {self.signature_stats['successful_verifications']}")
                 print(f"    • Failed: {self.signature_stats['failed_verifications']}")
                 print(f"    • Unsigned: {self.signature_stats['unsigned_parameters']}")
+            
+            # Log DP metrics if enabled
+            if self.enable_server_dp or any(
+                r[1].metrics.get("dp_enabled", False) for r in results
+            ):
+                print(f"  🔒 Differential Privacy Stats:")
+                
+                # Client-side DP
+                client_epsilons = [
+                    r[1].metrics.get("dp_epsilon", 0) 
+                    for r in results 
+                    if r[1].metrics.get("dp_enabled", False)
+                ]
+                
+                if client_epsilons:
+                    avg_epsilon = sum(client_epsilons) / len(client_epsilons)
+                    max_epsilon = max(client_epsilons)
+                    min_epsilon = min(client_epsilons)
+                    print(f"    • Client-side ε (avg): {avg_epsilon:.2f}")
+                    print(f"    • Client-side ε (max): {max_epsilon:.2f}")
+                    print(f"    • Client-side ε (min): {min_epsilon:.2f}")
+                
+                # Server-side DP
+                if self.enable_server_dp:
+                    print(f"    • Server-side noise multiplier: {self.server_dp_noise_multiplier}")
+                    print(f"    • Server-side sensitivity: {self.server_dp_sensitivity}")
             
             print(f"{'='*70}\n")
             
@@ -446,6 +553,10 @@ def create_fedmed_strategy(
     certificates_path: str = "/certificates",
     signature_policy: str = "log",  # "log", "warn", "reject"
     min_valid_signatures: float = 0.8,  # Minimum 80% must be valid
+    # Server-side Differential Privacy parameters
+    enable_server_dp: bool = False,
+    server_dp_noise_multiplier: float = 0.1,
+    server_dp_sensitivity: float = 1.0,
     **kwargs
 ) -> FedMedStrategy:
     """
@@ -467,6 +578,9 @@ def create_fedmed_strategy(
         certificates_path: Path to certificates
         signature_policy: Policy for invalid signatures ("log", "warn", "reject")
         min_valid_signatures: Minimum fraction of valid signatures (for "warn" policy)
+        enable_server_dp: Enable server-side Differential Privacy
+        server_dp_noise_multiplier: Noise multiplier for server-side DP
+        server_dp_sensitivity: Sensitivity for server-side DP
         **kwargs: Additional strategy arguments
     
     Returns:
@@ -483,6 +597,11 @@ def create_fedmed_strategy(
         certificates_path=certificates_path,
         signature_policy=signature_policy,
         min_valid_signatures=min_valid_signatures,
+        # Server-side DP
+        enable_server_dp=enable_server_dp,
+        server_dp_noise_multiplier=server_dp_noise_multiplier,
+        server_dp_sensitivity=server_dp_sensitivity,
+        # FedAvg parameters
         fraction_fit=fraction_fit,
         fraction_evaluate=fraction_evaluate,
         min_fit_clients=min_fit_clients,

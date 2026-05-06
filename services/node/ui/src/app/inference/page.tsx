@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Container,
   Typography,
@@ -37,6 +37,7 @@ import {
   NavigateBefore as NavigateBeforeIcon,
   NavigateNext as NavigateNextIcon,
   Visibility as VisibilityIcon,
+  VisibilityOff as VisibilityOffIcon,
 } from '@mui/icons-material';
 import Layout from '@/components/Layout';
 import ProtectedRoute from '@/components/ProtectedRoute';
@@ -66,6 +67,83 @@ export default function InferencePage() {
   // Viewer state
   const [selectedResultIndex, setSelectedResultIndex] = useState<number>(0);
   const [gradcamOpacity, setGradcamOpacity] = useState<number>(0.4);
+  const [gradcamEnabled, setGradcamEnabled] = useState<boolean>(true);
+  
+  // Image preloading refs
+  const imageCache = useRef<Map<string, HTMLImageElement>>(new Map());
+  const [imagesLoaded, setImagesLoaded] = useState<boolean>(false);
+
+  // Preload images when results change
+  useEffect(() => {
+    if (results.length === 0) {
+      setImagesLoaded(false);
+      return;
+    }
+
+    const currentResult = results[selectedResultIndex];
+    if (!currentResult) return;
+
+    setImagesLoaded(false);
+    
+    const imagePath = currentResult.image_path;
+    const gradcamPath = currentResult.gradcam_path;
+    
+    const imageUrl = `${apiBase}/api/infer/image?path=${encodeURIComponent(imagePath)}`;
+    const gradcamUrl = gradcamPath ? `${apiBase}/api/infer/image?path=${encodeURIComponent(gradcamPath)}` : null;
+
+    let loadedCount = 0;
+    const totalImages = gradcamUrl ? 2 : 1;
+
+    const checkAllLoaded = () => {
+      loadedCount++;
+      if (loadedCount === totalImages) {
+        setImagesLoaded(true);
+      }
+    };
+
+    // Preload main image
+    if (!imageCache.current.has(imageUrl)) {
+      const img = new Image();
+      img.onload = () => {
+        imageCache.current.set(imageUrl, img);
+        checkAllLoaded();
+      };
+      img.onerror = () => checkAllLoaded();
+      img.src = imageUrl;
+    } else {
+      checkAllLoaded();
+    }
+
+    // Preload gradcam image
+    if (gradcamUrl) {
+      if (!imageCache.current.has(gradcamUrl)) {
+        const img = new Image();
+        img.onload = () => {
+          imageCache.current.set(gradcamUrl, img);
+          checkAllLoaded();
+        };
+        img.onerror = () => checkAllLoaded();
+        img.src = gradcamUrl;
+      } else {
+        checkAllLoaded();
+      }
+    }
+  }, [results, selectedResultIndex, apiBase]);
+
+  // Memoize image URLs to prevent recalculation
+  const currentImageUrls = useMemo(() => {
+    if (results.length === 0 || !results[selectedResultIndex]) {
+      return { imageUrl: null, gradcamUrl: null };
+    }
+    
+    const result = results[selectedResultIndex];
+    return {
+      imageUrl: `${apiBase}/api/infer/image?path=${encodeURIComponent(result.image_path)}`,
+      gradcamUrl: result.gradcam_path 
+        ? `${apiBase}/api/infer/image?path=${encodeURIComponent(result.gradcam_path)}`
+        : null
+    };
+  }, [results, selectedResultIndex, apiBase]);
 
   // Browse directory
   const browseDirectory = async (directory: string) => {
@@ -413,38 +491,38 @@ export default function InferencePage() {
 
           {/* Results Viewer */}
           <Grid item xs={12} md={6}>
-            {results.length > 0 ? (
-              <Paper sx={{ p: 3, height: '100%' }}>
-                <Typography variant="h6" gutterBottom>
-                  Results
-                </Typography>
+            <Paper sx={{ p: 3, height: '100%' }}>
+              <Typography variant="h6" gutterBottom>
+                Results
+              </Typography>
 
-                {/* Result Navigation */}
-                {results.length > 1 && (
-                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 2 }}>
-                    <IconButton 
-                      onClick={() => setSelectedResultIndex(Math.max(0, selectedResultIndex - 1))}
-                      disabled={selectedResultIndex === 0}
-                    >
-                      <NavigateBeforeIcon />
-                    </IconButton>
-                    <Typography variant="body2" sx={{ mx: 2 }}>
-                      {selectedResultIndex + 1} / {results.length}
-                    </Typography>
-                    <IconButton 
-                      onClick={() => setSelectedResultIndex(Math.min(results.length - 1, selectedResultIndex + 1))}
-                      disabled={selectedResultIndex === results.length - 1}
-                    >
-                      <NavigateNextIcon />
-                    </IconButton>
-                  </Box>
-                )}
+              {/* Result Navigation - Always visible when there are results */}
+              {results.length > 0 && (
+                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 2 }}>
+                  <IconButton 
+                    onClick={() => setSelectedResultIndex(Math.max(0, selectedResultIndex - 1))}
+                    disabled={selectedResultIndex === 0 || results.length <= 1}
+                  >
+                    <NavigateBeforeIcon />
+                  </IconButton>
+                  <Typography variant="body2" sx={{ mx: 2 }}>
+                    {selectedResultIndex + 1} / {results.length}
+                  </Typography>
+                  <IconButton 
+                    onClick={() => setSelectedResultIndex(Math.min(results.length - 1, selectedResultIndex + 1))}
+                    disabled={selectedResultIndex === results.length - 1 || results.length <= 1}
+                  >
+                    <NavigateNextIcon />
+                  </IconButton>
+                </Box>
+              )}
 
-                {/* Current Result */}
-                {results[selectedResultIndex] && (
-                  <Grid container spacing={2}>
-                    {/* Left Column: Prediction & Probabilities */}
-                    <Grid item xs={12} md={6}>
+              {/* Results Display - Always show both columns */}
+              <Grid container spacing={2}>
+                {/* Left Column: Prediction & Probabilities */}
+                <Grid item xs={12} md={6}>
+                  {results.length > 0 && results[selectedResultIndex] ? (
+                    <>
                       {/* Prediction Info */}
                       <Card sx={{ mb: 2 }}>
                         <CardContent>
@@ -489,10 +567,47 @@ export default function InferencePage() {
                           </Box>
                         </CardContent>
                       </Card>
-                    </Grid>
+                    </>
+                  ) : (
+                    <>
+                      {/* Empty Prediction Card */}
+                      <Card sx={{ mb: 2 }}>
+                        <CardContent>
+                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                            Prediction
+                          </Typography>
+                          <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', py: 2 }}>
+                            -
+                          </Typography>
+                        </CardContent>
+                      </Card>
 
-                    {/* Right Column: Image & Opacity */}
-                    <Grid item xs={12} md={6}>
+                      {/* Empty Probabilities Card */}
+                      <Card>
+                        <CardContent>
+                          <Typography variant="subtitle2" gutterBottom>
+                            Class Probabilities
+                          </Typography>
+                          <Box sx={{ mt: 1 }}>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                              <Typography variant="body2" color="text.secondary">NORMAL</Typography>
+                              <Typography variant="body2" color="text.secondary">-</Typography>
+                            </Box>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                              <Typography variant="body2" color="text.secondary">PNEUMONIA</Typography>
+                              <Typography variant="body2" color="text.secondary">-</Typography>
+                            </Box>
+                          </Box>
+                        </CardContent>
+                      </Card>
+                    </>
+                  )}
+                </Grid>
+
+                {/* Right Column: Image & Opacity */}
+                <Grid item xs={12} md={6}>
+                  {results.length > 0 && results[selectedResultIndex] ? (
+                    <>
                       {/* Image Viewer with Grad-CAM Overlay */}
                       <Box sx={{ 
                         position: 'relative', 
@@ -501,10 +616,23 @@ export default function InferencePage() {
                         mx: 'auto',
                         mb: 2 
                       }}>
+                        {/* Loading indicator */}
+                        {!imagesLoaded && (
+                          <Box sx={{
+                            position: 'absolute',
+                            top: '50%',
+                            left: '50%',
+                            transform: 'translate(-50%, -50%)',
+                            zIndex: 10
+                          }}>
+                            <CircularProgress />
+                          </Box>
+                        )}
+                        
                         {/* Original Image */}
                         <Box
                           component="img"
-                          src={`${apiBase}/api/infer/image?path=${encodeURIComponent(results[selectedResultIndex].image_path)}`}
+                          src={currentImageUrls.imageUrl || ''}
                           alt="Original"
                           sx={{
                             width: '100%',
@@ -513,14 +641,16 @@ export default function InferencePage() {
                             borderRadius: 1,
                             border: '1px solid',
                             borderColor: 'divider',
+                            opacity: imagesLoaded ? 1 : 0.3,
+                            transition: 'opacity 0.3s ease-in-out',
                           }}
                         />
                         
                         {/* Grad-CAM Overlay */}
-                        {results[selectedResultIndex].gradcam_path && (
+                        {currentImageUrls.gradcamUrl && gradcamEnabled && (
                           <Box
                             component="img"
-                            src={`${apiBase}/api/infer/image?path=${encodeURIComponent(results[selectedResultIndex].gradcam_path)}`}
+                            src={currentImageUrls.gradcamUrl}
                             alt="Grad-CAM"
                             sx={{
                               position: 'absolute',
@@ -528,20 +658,39 @@ export default function InferencePage() {
                               left: 0,
                               width: '100%',
                               height: '100%',
-                              opacity: gradcamOpacity,
+                              opacity: imagesLoaded ? gradcamOpacity : 0,
                               borderRadius: 1,
                               pointerEvents: 'none',
-                              transition: 'opacity 0.05s linear',
+                              transition: 'opacity 0.1s ease-out',
+                              willChange: 'opacity',
                             }}
                           />
                         )}
                       </Box>
 
-                      {/* Opacity Slider */}
-                      {results[selectedResultIndex].gradcam_path && (
+                      {/* Grad-CAM Controls */}
+                      {currentImageUrls.gradcamUrl && (
                         <Box sx={{ px: 2, maxWidth: 400, mx: 'auto' }}>
+                          {/* Toggle Button */}
+                          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
+                            <Typography variant="body2" color="text.secondary">
+                              Grad-CAM Overlay
+                            </Typography>
+                            <Button
+                              size="small"
+                              variant={gradcamEnabled ? "contained" : "outlined"}
+                              color={gradcamEnabled ? "primary" : "inherit"}
+                              startIcon={gradcamEnabled ? <VisibilityIcon /> : <VisibilityOffIcon />}
+                              onClick={() => setGradcamEnabled(!gradcamEnabled)}
+                              sx={{ minWidth: 100 }}
+                            >
+                              {gradcamEnabled ? 'ON' : 'OFF'}
+                            </Button>
+                          </Box>
+                          
+                          {/* Opacity Slider - always visible, disabled when OFF */}
                           <Typography variant="body2" color="text.secondary" gutterBottom>
-                            Grad-CAM Opacity: {(gradcamOpacity * 100).toFixed(0)}%
+                            Opacity: {(gradcamOpacity * 100).toFixed(0)}%
                           </Typography>
                           <Slider
                             value={gradcamOpacity}
@@ -549,32 +698,55 @@ export default function InferencePage() {
                             min={0}
                             max={1}
                             step={0.01}
+                            disabled={!imagesLoaded || !gradcamEnabled}
                             marks={[
                               { value: 0, label: '0%' },
-                              { value: 0.4, label: '40%' },
+                              { value: 0.5, label: '50%' },
                               { value: 1, label: '100%' },
                             ]}
                             valueLabelDisplay="auto"
                             valueLabelFormat={(value) => `${(value * 100).toFixed(0)}%`}
+                            sx={{
+                              '& .MuiSlider-thumb': {
+                                transition: 'none',
+                              },
+                              '& .MuiSlider-track': {
+                                transition: 'none',
+                              },
+                            }}
                           />
                         </Box>
                       )}
-                    </Grid>
-                  </Grid>
-                )}
-              </Paper>
-            ) : (
-              <Paper sx={{ p: 3, height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <Box sx={{ textAlign: 'center' }}>
-                  <Typography variant="h6" color="text.secondary" gutterBottom>
-                    No Results Yet
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Select images and run inference, or view results from history below
-                  </Typography>
-                </Box>
-              </Paper>
-            )}
+                    </>
+                  ) : (
+                    /* Placeholder for no results */
+                    <Box sx={{ 
+                      width: '100%',
+                      maxWidth: 400,
+                      mx: 'auto',
+                      aspectRatio: '1',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      border: '2px dashed',
+                      borderColor: 'divider',
+                      borderRadius: 1,
+                      bgcolor: 'background.default'
+                    }}>
+                      <Box sx={{ textAlign: 'center', p: 3 }}>
+                        <ImageIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 1 }} />
+                        <Typography variant="body2" color="text.secondary">
+                          No results yet
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          Run inference or select from history
+                        </Typography>
+                      </Box>
+                    </Box>
+                  )}
+                </Grid>
+              </Grid>
+            </Paper>
           </Grid>
         </Grid>
 

@@ -144,6 +144,27 @@ def train_local_model_task(
             verbose=True
         )
         
+        # Compute comprehensive metrics on validation set
+        print(f"[{settings.NODE_ID}] Computing final metrics...")
+        model.eval()
+        y_true = []
+        y_pred = []
+        y_probs = []
+        
+        with torch.no_grad():
+            for inputs, labels in val_loader:
+                inputs = inputs.to(settings.DEVICE)
+                outputs = model(inputs)
+                probs = torch.softmax(outputs, dim=1)
+                _, predicted = torch.max(outputs, 1)
+                
+                y_true.extend(labels.cpu().numpy().tolist())
+                y_pred.extend(predicted.cpu().numpy().tolist())
+                y_probs.extend(probs[:, 1].cpu().numpy().tolist())  # Probability of positive class
+        
+        # Compute all metrics
+        final_metrics = compute_metrics(y_true, y_pred, y_probs)
+        
         # Save model as candidate
         model_id = f"{model_name}_local_{uuid.uuid4().hex[:8]}"
         model_path = os.path.join(settings.MODELS_CANDIDATE_DIR, f"{model_id}.pt")
@@ -152,10 +173,34 @@ def train_local_model_task(
             'model_name': model_name,
             'epochs': history['epochs_trained'],
             'best_val_acc': history['best_val_acc'],
-            'history': history
+            'history': history,
+            'final_metrics': final_metrics
         }
         
         save_model(model, model_path, metadata)
+        
+        # Prepare metrics for database (only scalar values)
+        db_metrics = {
+            'accuracy': final_metrics['accuracy'],
+            'f1': final_metrics['f1'],
+            'precision': final_metrics['precision'],
+            'recall': final_metrics['recall'],
+            'auc': final_metrics.get('auc'),
+            'sensitivity': final_metrics.get('sensitivity'),
+            'specificity': final_metrics.get('specificity'),
+            'train_loss': history['train_loss'][-1],
+            'val_loss': history['val_loss'][-1]
+        }
+        
+        print(f"[{settings.NODE_ID}] Final Metrics:")
+        print(f"  • Accuracy: {db_metrics['accuracy']:.4f}")
+        print(f"  • F1 Score: {db_metrics['f1']:.4f}")
+        print(f"  • Precision: {db_metrics['precision']:.4f}")
+        print(f"  • Recall: {db_metrics['recall']:.4f}")
+        if db_metrics['auc']:
+            print(f"  • AUC: {db_metrics['auc']:.4f}")
+        print(f"  • Sensitivity: {db_metrics['sensitivity']:.4f}")
+        print(f"  • Specificity: {db_metrics['specificity']:.4f}")
         
         # Save to database
         db = SessionLocal()
@@ -165,11 +210,7 @@ def train_local_model_task(
             version="local",
             type="candidate",
             file_path=model_path,
-            metrics={
-                'accuracy': history['best_val_acc'],
-                'train_loss': history['train_loss'][-1],
-                'val_loss': history['val_loss'][-1]
-            }
+            metrics=db_metrics
         )
         db.add(model_record)
         db.commit()
@@ -441,7 +482,16 @@ def federated_training_task(
             dataset_path=dataset_path,
             device=settings.DEVICE,
             batch_size=32,
-            round_id=round_id
+            round_id=round_id,
+            enable_ssl=os.getenv("ENABLE_SSL", "true").lower() == "true",
+            certificates_path=os.getenv("CERTIFICATES_PATH", "/certificates"),
+            # Differential Privacy parameters
+            enable_dp=os.getenv("ENABLE_DP", "false").lower() == "true",
+            dp_target_epsilon=float(os.getenv("DP_TARGET_EPSILON", "1.0")),
+            dp_target_delta=float(os.getenv("DP_TARGET_DELTA", "1e-5")),
+            dp_noise_multiplier=float(os.getenv("DP_NOISE_MULTIPLIER", "1.0")),
+            dp_max_grad_norm=float(os.getenv("DP_MAX_GRAD_NORM", "1.0")),
+            dp_max_epochs=int(os.getenv("DP_MAX_EPOCHS", "10")),
         )
         
         print(f"[{settings.NODE_ID}] ✅ Flower client completed successfully")
