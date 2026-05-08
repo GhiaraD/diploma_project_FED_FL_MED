@@ -129,8 +129,8 @@ def create_default_users():
                 hashed_password = get_password_hash(user_data["password"])
                 
                 cursor.execute('''
-                    INSERT INTO users (id, email, password_hash, role, node_id, is_active, created_at, password_changed_at)
-                    VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+                    INSERT INTO users (id, email, password_hash, role, node_id, is_active, created_at, password_changed_at, failed_login_attempts)
+                    VALUES (?, ?, ?, ?, ?, 1, ?, ?, 0)
                 ''', (
                     user_id,
                     user_data["email"],

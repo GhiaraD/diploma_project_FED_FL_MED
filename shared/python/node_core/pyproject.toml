@@ -13,8 +13,10 @@ authors = [
     {name = "Fed-Med-FL Team"}
 ]
 dependencies = [
-    "torch>=2.0.0",
-    "torchvision>=0.15.0",
+    # PyTorch with CUDA 13.2 support for RTX 5070 (Blackwell)
+    # Using nightly build for CUDA 13.2 compatibility
+    "torch>=2.6.0",  # Minimum version with Blackwell support
+    "torchvision>=0.21.0",  # Compatible with torch 2.6+
     "numpy>=1.21.0",
     "scikit-learn>=1.0.0",
     "Pillow>=9.0.0",

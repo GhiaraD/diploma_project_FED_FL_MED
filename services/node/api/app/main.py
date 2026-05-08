@@ -204,19 +204,43 @@ def browse_filesystem(
             
             if os.path.isdir(item_path):
                 # Check if it looks like a dataset (has NORMAL/PNEUMONIA folders)
-                is_dataset = (
-                    os.path.exists(os.path.join(item_path, "NORMAL")) and
-                    os.path.exists(os.path.join(item_path, "PNEUMONIA"))
-                )
+                # Support both direct structure and split-based structure
+                is_dataset = False
+                normal_path = None
+                pneumonia_path = None
+                
+                # Check direct structure: dataset/NORMAL, dataset/PNEUMONIA
+                if (os.path.exists(os.path.join(item_path, "NORMAL")) and
+                    os.path.exists(os.path.join(item_path, "PNEUMONIA"))):
+                    is_dataset = True
+                    normal_path = os.path.join(item_path, "NORMAL")
+                    pneumonia_path = os.path.join(item_path, "PNEUMONIA")
+                
+                # Check split-based structure: dataset/train/NORMAL, dataset/train/PNEUMONIA
+                elif (os.path.exists(os.path.join(item_path, "train", "NORMAL")) and
+                      os.path.exists(os.path.join(item_path, "train", "PNEUMONIA"))):
+                    is_dataset = True
+                    normal_path = os.path.join(item_path, "train", "NORMAL")
+                    pneumonia_path = os.path.join(item_path, "train", "PNEUMONIA")
+                
+                # Check other common splits: val, test
+                elif (os.path.exists(os.path.join(item_path, "val", "NORMAL")) and
+                      os.path.exists(os.path.join(item_path, "val", "PNEUMONIA"))):
+                    is_dataset = True
+                    normal_path = os.path.join(item_path, "val", "NORMAL")
+                    pneumonia_path = os.path.join(item_path, "val", "PNEUMONIA")
+                elif (os.path.exists(os.path.join(item_path, "test", "NORMAL")) and
+                      os.path.exists(os.path.join(item_path, "test", "PNEUMONIA"))):
+                    is_dataset = True
+                    normal_path = os.path.join(item_path, "test", "NORMAL")
+                    pneumonia_path = os.path.join(item_path, "test", "PNEUMONIA")
                 
                 # Count samples if it's a dataset
                 num_samples = 0
                 num_normal = 0
                 num_pneumonia = 0
                 
-                if is_dataset:
-                    normal_path = os.path.join(item_path, "NORMAL")
-                    pneumonia_path = os.path.join(item_path, "PNEUMONIA")
+                if is_dataset and normal_path and pneumonia_path:
                     num_normal = len([f for f in os.listdir(normal_path) if os.path.isfile(os.path.join(normal_path, f))])
                     num_pneumonia = len([f for f in os.listdir(pneumonia_path) if os.path.isfile(os.path.join(pneumonia_path, f))])
                     num_samples = num_normal + num_pneumonia
@@ -276,15 +300,23 @@ async def register_dataset(
         Dataset information
     """
     import time
+    import logging
+    logger = logging.getLogger(__name__)
     start_time = time.time()
+    
+    # Log the incoming request data for debugging
+    logger.info(f"Dataset register request: path={request_data.path}, name={request_data.name}, split={request_data.split}")
+    
     # Validate path exists
     if not os.path.exists(request_data.path):
+        logger.error(f"Dataset path not found: {request_data.path}")
         raise HTTPException(
             status_code=404,
             detail=f"Dataset path not found: {request_data.path}"
         )
     
     if not os.path.isdir(request_data.path):
+        logger.error(f"Path is not a directory: {request_data.path}")
         raise HTTPException(
             status_code=400,
             detail=f"Path is not a directory: {request_data.path}"
@@ -295,6 +327,7 @@ async def register_dataset(
     split_path = os.path.join(request_data.path, request_data.split)
     
     if not os.path.exists(split_path):
+        logger.error(f"Split directory not found: {split_path}")
         raise HTTPException(
             status_code=400,
             detail=f"Split directory not found: {split_path}"
@@ -304,12 +337,14 @@ async def register_dataset(
     pneumonia_path = os.path.join(split_path, "PNEUMONIA")
     
     if not os.path.exists(normal_path):
+        logger.error(f"NORMAL folder not found at: {normal_path}")
         raise HTTPException(
             status_code=400,
             detail=f"Dataset must contain NORMAL folder at {normal_path}"
         )
     
     if not os.path.exists(pneumonia_path):
+        logger.error(f"PNEUMONIA folder not found at: {pneumonia_path}")
         raise HTTPException(
             status_code=400,
             detail=f"Dataset must contain PNEUMONIA folder at {pneumonia_path}"

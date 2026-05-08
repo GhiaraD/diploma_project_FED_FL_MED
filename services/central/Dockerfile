@@ -11,7 +11,11 @@ RUN apt-get update && apt-get install -y \
 # Copy shared library first
 COPY shared/python/node_core /app/shared/python/node_core
 
-# Install shared library
+# Install PyTorch with CUDA 13.2 support for RTX 5070 (Blackwell)
+# Using nightly build for CUDA 13.2 compatibility
+RUN pip install --no-cache-dir --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/cu132
+
+# Install shared library (will skip torch/torchvision since already installed)
 RUN pip install --no-cache-dir -e /app/shared/python/node_core
 
 # Install Central dependencies
