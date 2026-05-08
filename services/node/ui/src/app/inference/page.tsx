@@ -1,5 +1,6 @@
 'use client';
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react';
+import { FixedSizeList } from 'react-window';
 import {
   Container,
   Typography,
@@ -8,7 +9,6 @@ import {
   Box,
   CircularProgress,
   Alert,
-  Grid,
   Card,
   CardContent,
   Chip,
@@ -45,12 +45,235 @@ import { useAuth } from '@/contexts/AuthContext';
 
 const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8001';
 
+// ─── Grad-CAM split components ───────────────────────────────────────────────
+// State lives in the parent (InferencePage) via a shared ref object.
+// GradcamControls renders the toggle + slider in the left column.
+// GradcamImage renders only the image + overlay in the right column.
+// Slider drags update the overlay DOM directly — zero re-render on the page.
+
+interface GradcamRef {
+  overlayEl: HTMLImageElement | null;
+  opacity: number;
+  enabled: boolean;
+}
+
+interface GradcamImageProps {
+  imageUrl: string | null;
+  gradcamUrl: string | null;
+  imagesLoaded: boolean;
+  sharedRef: React.MutableRefObject<GradcamRef>;
+}
+
+const GradcamImage = memo(function GradcamImage({
+  imageUrl, gradcamUrl, imagesLoaded, sharedRef,
+}: GradcamImageProps) {
+  const overlayRef = useRef<HTMLImageElement>(null);
+
+  // Keep sharedRef.overlayEl in sync
+  useEffect(() => {
+    sharedRef.current.overlayEl = overlayRef.current;
+  });
+
+  // Apply opacity when images finish loading
+  useEffect(() => {
+    if (overlayRef.current) {
+      overlayRef.current.style.opacity =
+        imagesLoaded && sharedRef.current.enabled
+          ? String(sharedRef.current.opacity)
+          : '0';
+    }
+  }, [imagesLoaded, sharedRef]);
+
+  return (
+    <Box sx={{
+      position: 'relative',
+      width: '100%',
+      height: 400,
+      borderRadius: 1,
+      border: '1px solid',
+      borderColor: 'divider',
+      overflow: 'hidden',
+      bgcolor: 'background.default',
+    }}>
+      {!imagesLoaded && (
+        <Box sx={{
+          position: 'absolute', top: '50%', left: '50%',
+          transform: 'translate(-50%, -50%)', zIndex: 10,
+        }}>
+          <CircularProgress />
+        </Box>
+      )}
+      <Box
+        component="img"
+        src={imageUrl || ''}
+        alt="Original"
+        sx={{
+          width: '100%', height: '100%',
+          objectFit: 'contain', display: 'block',
+          opacity: imagesLoaded ? 1 : 0.3,
+          transition: 'opacity 0.3s ease-in-out',
+        }}
+      />
+      {gradcamUrl && (
+        <Box
+          ref={overlayRef}
+          component="img"
+          src={gradcamUrl}
+          alt="Grad-CAM"
+          sx={{
+            position: 'absolute', top: 0, left: 0,
+            width: '100%', height: '100%',
+            objectFit: 'contain',
+            opacity: 0,
+            pointerEvents: 'none',
+            willChange: 'opacity',
+            transform: 'translateZ(0)',
+          }}
+        />
+      )}
+    </Box>
+  );
+});
+
+interface GradcamControlsProps {
+  gradcamUrl: string | null;
+  imagesLoaded: boolean;
+  sharedRef: React.MutableRefObject<GradcamRef>;
+}
+
+const GradcamControls = memo(function GradcamControls({
+  gradcamUrl, imagesLoaded, sharedRef,
+}: GradcamControlsProps) {
+  const [opacityLabel, setOpacityLabel] = useState(sharedRef.current.opacity);
+  const [enabled, setEnabled] = useState(sharedRef.current.enabled);
+
+  const handleChange = useCallback((_: any, value: number | number[]) => {
+    const v = value as number;
+    sharedRef.current.opacity = v;
+    if (sharedRef.current.overlayEl && sharedRef.current.enabled) {
+      sharedRef.current.overlayEl.style.opacity = String(v);
+    }
+  }, [sharedRef]);
+
+  const handleChangeCommitted = useCallback((_: any, value: number | number[]) => {
+    setOpacityLabel(value as number);
+  }, []);
+
+  const handleToggle = useCallback(() => {
+    const next = !sharedRef.current.enabled;
+    sharedRef.current.enabled = next;
+    setEnabled(next);
+    if (sharedRef.current.overlayEl) {
+      sharedRef.current.overlayEl.style.opacity = next
+        ? String(sharedRef.current.opacity)
+        : '0';
+    }
+  }, [sharedRef]);
+
+  if (!gradcamUrl) {
+    return (
+      <Card>
+        <CardContent>
+          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+            Grad-CAM Overlay
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            No Grad-CAM available
+          </Typography>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <CardContent>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
+          <Typography variant="subtitle2" color="text.secondary">
+            Grad-CAM Overlay
+          </Typography>
+          <Button
+            size="small"
+            variant={enabled ? 'contained' : 'outlined'}
+            color={enabled ? 'primary' : 'inherit'}
+            startIcon={enabled ? <VisibilityIcon /> : <VisibilityOffIcon />}
+            onClick={handleToggle}
+            sx={{ minWidth: 80 }}
+          >
+            {enabled ? 'ON' : 'OFF'}
+          </Button>
+        </Box>
+        <Typography variant="body2" color="text.secondary" gutterBottom>
+          Opacity: {(opacityLabel * 100).toFixed(0)}%
+        </Typography>
+        <Slider
+          defaultValue={sharedRef.current.opacity}
+          onChange={handleChange}
+          onChangeCommitted={handleChangeCommitted}
+          min={0} max={1} step={0.01}
+          disabled={!imagesLoaded || !enabled}
+          marks={[
+            { value: 0, label: '0%' },
+            { value: 0.5, label: '50%' },
+            { value: 1, label: '100%' },
+          ]}
+          valueLabelDisplay="auto"
+          valueLabelFormat={(v) => `${(v * 100).toFixed(0)}%`}
+          sx={{
+            '& .MuiSlider-thumb': { transition: 'none' },
+            '& .MuiSlider-track': { transition: 'none' },
+          }}
+        />
+      </CardContent>
+    </Card>
+  );
+});
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─── FileItem ─────────────────────────────────────────────────────────────────
+// Memoized so only the clicked item re-renders on selection change.
+interface FileItemProps {
+  file: { path: string; name: string; size: number };
+  selected: boolean;
+  onToggle: (path: string) => void;
+}
+
+const FileItem = memo(function FileItem({ file, selected, onToggle }: FileItemProps) {
+  // Stable click handler — recreated only if file.path or onToggle changes
+  const handleClick = useCallback(() => onToggle(file.path), [onToggle, file.path]);
+
+  return (
+    <ListItem disablePadding>
+      <ListItemButton
+        onClick={handleClick}
+        disableRipple
+        disableTouchRipple
+      >
+        <Checkbox
+          edge="start"
+          checked={selected}
+          tabIndex={-1}
+          disableRipple
+        />
+        <ImageIcon sx={{ mr: 1, color: 'text.secondary' }} />
+        <ListItemText
+          primary={file.name}
+          secondary={`${(file.size / 1024).toFixed(1)} KB`}
+        />
+      </ListItemButton>
+    </ListItem>
+  );
+// Custom comparator: only re-render when selection changes
+}, (prev, next) => prev.selected === next.selected && prev.file.path === next.file.path && prev.onToggle === next.onToggle);
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function InferencePage() {
   const { token } = useAuth();
   const [currentDir, setCurrentDir] = useState('/storage/datasets');
   const [files, setFiles] = useState<any[]>([]);
   const [subdirs, setSubdirs] = useState<any[]>([]);
-  const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
+  const [filesTotalTruncated, setFilesTotalTruncated] = useState(false);
   const [loading, setLoading] = useState(false);
   const [browsing, setBrowsing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -66,9 +289,10 @@ export default function InferencePage() {
   
   // Viewer state
   const [selectedResultIndex, setSelectedResultIndex] = useState<number>(0);
-  const [gradcamOpacity, setGradcamOpacity] = useState<number>(0.4);
-  const [gradcamEnabled, setGradcamEnabled] = useState<boolean>(true);
-  
+
+  // Shared ref between GradcamControls (left) and GradcamImage (right)
+  const gradcamSharedRef = useRef<GradcamRef>({ overlayEl: null, opacity: 0.4, enabled: true });
+
   // Image preloading refs
   const imageCache = useRef<Map<string, HTMLImageElement>>(new Map());
   const [imagesLoaded, setImagesLoaded] = useState<boolean>(false);
@@ -168,6 +392,7 @@ export default function InferencePage() {
       const data = await response.json();
       setFiles(data.files || []);
       setSubdirs(data.subdirectories || []);
+      setFilesTotalTruncated(data.truncated || false);
       setCurrentDir(directory);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to browse directory');
@@ -183,6 +408,20 @@ export default function InferencePage() {
       loadInferenceHistory();
     }
   }, [token]);
+
+  // Load inference history - silent version (no loading spinner) for background refreshes
+  const loadInferenceHistorySilent = async () => {
+    try {
+      const response = await fetch(`${apiBase}/api/jobs/list?job_type=infer&limit=100`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      setInferenceHistory(data.jobs || []);
+    } catch (err) {
+      // silent fail
+    }
+  };
 
   // Load inference history
   const loadInferenceHistory = async () => {
@@ -233,17 +472,21 @@ export default function InferencePage() {
   };
 
   // Toggle file selection
-  const toggleFileSelection = (path: string) => {
-    setSelectedPaths(prev => 
-      prev.includes(path) 
-        ? prev.filter(p => p !== path)
-        : [...prev, path]
-    );
-  };
+  const toggleFileSelection = useCallback((path: string) => {
+    setSelectedPaths(prev => {
+      const next = new Set(prev);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      return next;
+    });
+  }, []);
 
   // Run inference
   const handleInference = async () => {
-    if (selectedPaths.length === 0) {
+    if (selectedPaths.size === 0) {
       setError('Please select at least one image');
       return;
     }
@@ -261,7 +504,7 @@ export default function InferencePage() {
           'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({
-          image_paths: selectedPaths,
+          image_paths: Array.from(selectedPaths),
           generate_gradcam: true
         })
       });
@@ -278,7 +521,7 @@ export default function InferencePage() {
       pollResults(data.job_id);
       
       // Reload history to show new job
-      loadInferenceHistory();
+      loadInferenceHistorySilent();
       
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Inference failed');
@@ -307,7 +550,7 @@ export default function InferencePage() {
           setResults(data.results || []);
           setSelectedResultIndex(0);
           setLoading(false);
-          loadInferenceHistory(); // Refresh history
+          loadInferenceHistorySilent(); // Refresh history silently
         } else if (data.status === 'failed') {
           clearInterval(poll);
           setError('Inference job failed');
@@ -381,9 +624,9 @@ export default function InferencePage() {
         )}
 
         {/* Top Section: Browse Images + Results Viewer */}
-        <Grid container spacing={3} sx={{ mb: 3 }}>
+        <Box sx={{ display: 'grid', gridTemplateColumns: '3fr 6fr', gap: 3, mb: 3 }}>
           {/* Browse Images */}
-          <Grid item xs={12} md={6}>
+          <Box>
             <Paper sx={{ p: 3, height: '100%' }}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                 <Typography variant="h6">
@@ -441,86 +684,68 @@ export default function InferencePage() {
 
                   {/* Image Files */}
                   <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                    Images ({files.length})
+                    Images ({files.length}{filesTotalTruncated ? ', showing first 200' : ''})
                   </Typography>
+                  {filesTotalTruncated && (
+                    <Alert severity="info" sx={{ mb: 1, py: 0 }}>
+                      Directory has more than 200 images.
+                    </Alert>
+                  )}
                   {files.length === 0 ? (
                     <Typography variant="body2" color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>
                       No images found
                     </Typography>
                   ) : (
-                    <List dense sx={{ maxHeight: 300, overflow: 'auto' }}>
-                      {files.map((file) => (
-                        <ListItem key={file.path} disablePadding>
-                          <ListItemButton onClick={() => toggleFileSelection(file.path)}>
-                            <Checkbox
-                              edge="start"
-                              checked={selectedPaths.includes(file.path)}
-                              tabIndex={-1}
-                              disableRipple
-                            />
-                            <ImageIcon sx={{ mr: 1, color: 'text.secondary' }} />
-                            <ListItemText 
-                              primary={file.name}
-                              secondary={`${(file.size / 1024).toFixed(1)} KB`}
-                            />
-                          </ListItemButton>
-                        </ListItem>
-                      ))}
-                    </List>
+                    <FixedSizeList
+                      height={300}
+                      itemCount={files.length}
+                      itemSize={48}
+                      width="100%"
+                      style={{ overflowX: 'hidden' }}
+                    >
+                      {({ index, style }) => (
+                        <div style={style}>
+                          <FileItem
+                            file={files[index]}
+                            selected={selectedPaths.has(files[index].path)}
+                            onToggle={toggleFileSelection}
+                          />
+                        </div>
+                      )}
+                    </FixedSizeList>
                   )}
                 </>
               )}
 
               <Box sx={{ mt: 3 }}>
                 <Typography variant="body2" color="text.secondary" gutterBottom>
-                  Selected: {selectedPaths.length} image(s)
+                  Selected: {selectedPaths.size} image(s)
                 </Typography>
                 <Button
                   variant="contained"
                   size="large"
                   startIcon={<PsychologyIcon />}
                   onClick={handleInference}
-                  disabled={selectedPaths.length === 0 || loading}
+                  disabled={selectedPaths.size === 0 || loading}
                   fullWidth
                 >
                   {loading ? <CircularProgress size={24} /> : 'Run Inference'}
                 </Button>
               </Box>
             </Paper>
-          </Grid>
+          </Box>
 
           {/* Results Viewer */}
-          <Grid item xs={12} md={6}>
+          <Box>
             <Paper sx={{ p: 3, height: '100%' }}>
               <Typography variant="h6" gutterBottom>
                 Results
               </Typography>
 
-              {/* Result Navigation - Always visible when there are results */}
-              {results.length > 0 && (
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 2 }}>
-                  <IconButton 
-                    onClick={() => setSelectedResultIndex(Math.max(0, selectedResultIndex - 1))}
-                    disabled={selectedResultIndex === 0 || results.length <= 1}
-                  >
-                    <NavigateBeforeIcon />
-                  </IconButton>
-                  <Typography variant="body2" sx={{ mx: 2 }}>
-                    {selectedResultIndex + 1} / {results.length}
-                  </Typography>
-                  <IconButton 
-                    onClick={() => setSelectedResultIndex(Math.min(results.length - 1, selectedResultIndex + 1))}
-                    disabled={selectedResultIndex === results.length - 1 || results.length <= 1}
-                  >
-                    <NavigateNextIcon />
-                  </IconButton>
-                </Box>
-              )}
-
               {/* Results Display - Always show both columns */}
-              <Grid container spacing={2}>
+              <Box sx={{ display: 'grid', gridTemplateColumns: '3fr 6fr', gap: 2 }}>
                 {/* Left Column: Prediction & Probabilities */}
-                <Grid item xs={12} md={6}>
+                <Box>
                   {results.length > 0 && results[selectedResultIndex] ? (
                     <>
                       {/* Prediction Info */}
@@ -546,7 +771,7 @@ export default function InferencePage() {
                       </Card>
 
                       {/* Probabilities */}
-                      <Card>
+                      <Card sx={{ mb: 2 }}>
                         <CardContent>
                           <Typography variant="subtitle2" gutterBottom>
                             Class Probabilities
@@ -567,23 +792,36 @@ export default function InferencePage() {
                           </Box>
                         </CardContent>
                       </Card>
+
+                      {/* Grad-CAM Controls — in left column */}
+                      <GradcamControls
+                        gradcamUrl={currentImageUrls.gradcamUrl}
+                        imagesLoaded={imagesLoaded}
+                        sharedRef={gradcamSharedRef}
+                      />
                     </>
                   ) : (
                     <>
-                      {/* Empty Prediction Card */}
+                      {/* Empty Prediction Card - same structure as filled */}
                       <Card sx={{ mb: 2 }}>
                         <CardContent>
-                          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                            Prediction
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                            <Typography variant="subtitle2" color="text.secondary">
+                              Prediction
+                            </Typography>
+                            <Chip label="—" size="small" />
+                          </Box>
+                          <Typography variant="h4" gutterBottom color="text.disabled">
+                            —
                           </Typography>
-                          <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', py: 2 }}>
-                            -
+                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                            No image selected
                           </Typography>
                         </CardContent>
                       </Card>
 
-                      {/* Empty Probabilities Card */}
-                      <Card>
+                      {/* Empty Probabilities Card - same structure as filled */}
+                      <Card sx={{ mb: 2 }}>
                         <CardContent>
                           <Typography variant="subtitle2" gutterBottom>
                             Class Probabilities
@@ -591,164 +829,82 @@ export default function InferencePage() {
                           <Box sx={{ mt: 1 }}>
                             <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
                               <Typography variant="body2" color="text.secondary">NORMAL</Typography>
-                              <Typography variant="body2" color="text.secondary">-</Typography>
+                              <Typography variant="body2" color="text.disabled">—</Typography>
                             </Box>
                             <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                               <Typography variant="body2" color="text.secondary">PNEUMONIA</Typography>
-                              <Typography variant="body2" color="text.secondary">-</Typography>
+                              <Typography variant="body2" color="text.disabled">—</Typography>
                             </Box>
                           </Box>
                         </CardContent>
                       </Card>
+
+                      {/* Grad-CAM Controls placeholder — disabled when no results */}
+                      <GradcamControls
+                        gradcamUrl={null}
+                        imagesLoaded={false}
+                        sharedRef={gradcamSharedRef}
+                      />
                     </>
                   )}
-                </Grid>
+                </Box>
 
                 {/* Right Column: Image & Opacity */}
-                <Grid item xs={12} md={6}>
+                <Box>
+                  {/* Navigation - centered over the image column */}
+                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mb: 1 }}>
+                    <IconButton
+                      onClick={() => setSelectedResultIndex(Math.max(0, selectedResultIndex - 1))}
+                      disabled={results.length === 0 || selectedResultIndex === 0 || results.length <= 1}
+                    >
+                      <NavigateBeforeIcon />
+                    </IconButton>
+                    <Typography variant="body2" sx={{ mx: 2 }}>
+                      {results.length > 0 ? `${selectedResultIndex + 1} / ${results.length}` : '0 / 0'}
+                    </Typography>
+                    <IconButton
+                      onClick={() => setSelectedResultIndex(Math.min(results.length - 1, selectedResultIndex + 1))}
+                      disabled={results.length === 0 || selectedResultIndex === results.length - 1 || results.length <= 1}
+                    >
+                      <NavigateNextIcon />
+                    </IconButton>
+                  </Box>
                   {results.length > 0 && results[selectedResultIndex] ? (
-                    <>
-                      {/* Image Viewer with Grad-CAM Overlay */}
-                      <Box sx={{ 
-                        position: 'relative', 
-                        width: '100%',
-                        maxWidth: 400,
-                        mx: 'auto',
-                        mb: 2 
-                      }}>
-                        {/* Loading indicator */}
-                        {!imagesLoaded && (
-                          <Box sx={{
-                            position: 'absolute',
-                            top: '50%',
-                            left: '50%',
-                            transform: 'translate(-50%, -50%)',
-                            zIndex: 10
-                          }}>
-                            <CircularProgress />
-                          </Box>
-                        )}
-                        
-                        {/* Original Image */}
-                        <Box
-                          component="img"
-                          src={currentImageUrls.imageUrl || ''}
-                          alt="Original"
-                          sx={{
-                            width: '100%',
-                            height: 'auto',
-                            display: 'block',
-                            borderRadius: 1,
-                            border: '1px solid',
-                            borderColor: 'divider',
-                            opacity: imagesLoaded ? 1 : 0.3,
-                            transition: 'opacity 0.3s ease-in-out',
-                          }}
-                        />
-                        
-                        {/* Grad-CAM Overlay */}
-                        {currentImageUrls.gradcamUrl && gradcamEnabled && (
-                          <Box
-                            component="img"
-                            src={currentImageUrls.gradcamUrl}
-                            alt="Grad-CAM"
-                            sx={{
-                              position: 'absolute',
-                              top: 0,
-                              left: 0,
-                              width: '100%',
-                              height: '100%',
-                              opacity: imagesLoaded ? gradcamOpacity : 0,
-                              borderRadius: 1,
-                              pointerEvents: 'none',
-                              transition: 'opacity 0.1s ease-out',
-                              willChange: 'opacity',
-                            }}
-                          />
-                        )}
-                      </Box>
-
-                      {/* Grad-CAM Controls */}
-                      {currentImageUrls.gradcamUrl && (
-                        <Box sx={{ px: 2, maxWidth: 400, mx: 'auto' }}>
-                          {/* Toggle Button */}
-                          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
-                            <Typography variant="body2" color="text.secondary">
-                              Grad-CAM Overlay
-                            </Typography>
-                            <Button
-                              size="small"
-                              variant={gradcamEnabled ? "contained" : "outlined"}
-                              color={gradcamEnabled ? "primary" : "inherit"}
-                              startIcon={gradcamEnabled ? <VisibilityIcon /> : <VisibilityOffIcon />}
-                              onClick={() => setGradcamEnabled(!gradcamEnabled)}
-                              sx={{ minWidth: 100 }}
-                            >
-                              {gradcamEnabled ? 'ON' : 'OFF'}
-                            </Button>
-                          </Box>
-                          
-                          {/* Opacity Slider - always visible, disabled when OFF */}
-                          <Typography variant="body2" color="text.secondary" gutterBottom>
-                            Opacity: {(gradcamOpacity * 100).toFixed(0)}%
-                          </Typography>
-                          <Slider
-                            value={gradcamOpacity}
-                            onChange={(_, value) => setGradcamOpacity(value as number)}
-                            min={0}
-                            max={1}
-                            step={0.01}
-                            disabled={!imagesLoaded || !gradcamEnabled}
-                            marks={[
-                              { value: 0, label: '0%' },
-                              { value: 0.5, label: '50%' },
-                              { value: 1, label: '100%' },
-                            ]}
-                            valueLabelDisplay="auto"
-                            valueLabelFormat={(value) => `${(value * 100).toFixed(0)}%`}
-                            sx={{
-                              '& .MuiSlider-thumb': {
-                                transition: 'none',
-                              },
-                              '& .MuiSlider-track': {
-                                transition: 'none',
-                              },
-                            }}
-                          />
-                        </Box>
-                      )}
-                    </>
+                    <GradcamImage
+                      imageUrl={currentImageUrls.imageUrl}
+                      gradcamUrl={currentImageUrls.gradcamUrl}
+                      imagesLoaded={imagesLoaded}
+                      sharedRef={gradcamSharedRef}
+                    />
                   ) : (
-                    /* Placeholder for no results */
-                    <Box sx={{ 
+                    /* Placeholder */
+                    <Box sx={{
+                      position: 'relative',
                       width: '100%',
-                      maxWidth: 400,
-                      mx: 'auto',
-                      aspectRatio: '1',
+                      height: 400,
+                      borderRadius: 1,
+                      border: '2px dashed',
+                      borderColor: 'divider',
+                      overflow: 'hidden',
+                      bgcolor: 'background.default',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      border: '2px dashed',
-                      borderColor: 'divider',
-                      borderRadius: 1,
-                      bgcolor: 'background.default'
                     }}>
                       <Box sx={{ textAlign: 'center', p: 3 }}>
                         <ImageIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 1 }} />
-                        <Typography variant="body2" color="text.secondary">
-                          No results yet
-                        </Typography>
+                        <Typography variant="body2" color="text.secondary">No results yet</Typography>
                         <Typography variant="caption" color="text.secondary">
                           Run inference or select from history
                         </Typography>
                       </Box>
                     </Box>
                   )}
-                </Grid>
-              </Grid>
+                </Box>
+              </Box>
             </Paper>
-          </Grid>
-        </Grid>
+          </Box>
+        </Box>
 
         {/* Bottom Section: Inference History Table */}
         <Paper sx={{ p: 3 }}>

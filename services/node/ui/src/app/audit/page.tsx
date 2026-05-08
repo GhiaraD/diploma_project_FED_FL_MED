@@ -488,7 +488,7 @@ export default function AuditPage() {
                             <Box>
                               <Typography variant="body2" color="text.secondary">Query Parameters</Typography>
                               <Paper sx={{ p: 2, mt: 0.5, bgcolor: 'grey.50' }}>
-                                <pre style={{ margin: 0, fontSize: '0.875rem', fontFamily: 'monospace' }}>
+                                <pre style={{ margin: 0, fontSize: '0.875rem', fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
                                   {JSON.stringify(selectedLog.details.request_details.query_params, null, 2)}
                                 </pre>
                               </Paper>
@@ -500,7 +500,7 @@ export default function AuditPage() {
                             <Box>
                               <Typography variant="body2" color="text.secondary">Request Body</Typography>
                               <Paper sx={{ p: 2, mt: 0.5, bgcolor: 'grey.50' }}>
-                                <pre style={{ margin: 0, fontSize: '0.875rem', fontFamily: 'monospace' }}>
+                                <pre style={{ margin: 0, fontSize: '0.875rem', fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
                                   {typeof selectedLog.details.request_details.request_body === 'string' 
                                     ? selectedLog.details.request_details.request_body
                                     : JSON.stringify(selectedLog.details.request_details.request_body, null, 2)
@@ -515,7 +515,7 @@ export default function AuditPage() {
                             <Box>
                               <Typography variant="body2" color="text.secondary">Request Headers</Typography>
                               <Paper sx={{ p: 2, mt: 0.5, bgcolor: 'grey.50' }}>
-                                <pre style={{ margin: 0, fontSize: '0.875rem', fontFamily: 'monospace' }}>
+                                <pre style={{ margin: 0, fontSize: '0.875rem', fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
                                   {JSON.stringify(selectedLog.details.request_details.headers, null, 2)}
                                 </pre>
                               </Paper>
@@ -536,7 +536,7 @@ export default function AuditPage() {
                       </AccordionSummary>
                       <AccordionDetails>
                         <Paper sx={{ p: 2, bgcolor: 'grey.50' }}>
-                          <pre style={{ margin: 0, fontSize: '0.875rem', fontFamily: 'monospace' }}>
+                          <pre style={{ margin: 0, fontSize: '0.875rem', fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
                             {JSON.stringify(
                               Object.fromEntries(
                                 Object.entries(selectedLog.details).filter(([key]) => key !== 'request_details')

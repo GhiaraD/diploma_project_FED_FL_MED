@@ -118,7 +118,7 @@ export default function ModelsPage() {
   return (
     <ProtectedRoute>
       <Layout title="Models">
-      <Container maxWidth="lg">
+      <Container maxWidth="xl">
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
           <Typography variant="h4">
             Model Registry
@@ -247,8 +247,10 @@ export default function ModelsPage() {
                   models.map((model) => (
                     <TableRow key={model.model_id}>
                       <TableCell>
-                        <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>
-                          {model.model_id}
+                        <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.75rem', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          <Tooltip title={model.model_id} placement="top">
+                            <span>{model.model_id}</span>
+                          </Tooltip>
                         </Typography>
                       </TableCell>
                       <TableCell>{model.model_name}</TableCell>

@@ -22,7 +22,6 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  Grid,
   Divider,
 } from '@mui/material';
 import {
@@ -369,251 +368,162 @@ export default function FederatedPage() {
               </DialogTitle>
               <DialogContent>
                 {selectedRound && (
-                  <Box sx={{ pt: 2 }}>
-                    <Grid container spacing={3}>
-                      {/* General Info */}
-                      <Grid item xs={12}>
-                        <Typography variant="h6" gutterBottom>
-                          General Information
-                        </Typography>
-                        <Divider sx={{ mb: 2 }} />
-                      </Grid>
-                      
-                      <Grid item xs={6}>
-                        <Typography variant="body2" color="text.secondary">
-                          Round ID
-                        </Typography>
-                        <Typography variant="body1" fontWeight="bold">
-                          {selectedRound.round_id}
-                        </Typography>
-                      </Grid>
+                  <Box sx={{ pt: 2, display: 'flex', flexDirection: 'column', gap: 3 }}>
 
-                      <Grid item xs={6}>
-                        <Typography variant="body2" color="text.secondary">
-                          Status
-                        </Typography>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
-                          {getStatusIcon(selectedRound.local_status)}
-                          <Chip
-                            label={selectedRound.local_status}
-                            size="small"
-                            color={getStatusColor(selectedRound.local_status) as any}
-                          />
+                    {/* General Info */}
+                    <Box>
+                      <Typography variant="h6" gutterBottom>General Information</Typography>
+                      <Divider sx={{ mb: 2 }} />
+                      <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+                        <Box>
+                          <Typography variant="body2" color="text.secondary">Round ID</Typography>
+                          <Typography variant="body1" fontWeight="bold" sx={{ wordBreak: 'break-all' }}>
+                            {selectedRound.round_id}
+                          </Typography>
                         </Box>
-                      </Grid>
+                        <Box>
+                          <Typography variant="body2" color="text.secondary">Status</Typography>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
+                            {getStatusIcon(selectedRound.local_status)}
+                            <Chip label={selectedRound.local_status} size="small" color={getStatusColor(selectedRound.local_status) as any} />
+                          </Box>
+                        </Box>
+                        <Box>
+                          <Typography variant="body2" color="text.secondary">Participated</Typography>
+                          <Typography variant="body1">
+                            {getParticipationStatus(selectedRound) ? 'Yes' : 'No'}
+                          </Typography>
+                        </Box>
+                        <Box>
+                          <Typography variant="body2" color="text.secondary">Job ID</Typography>
+                          <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.875rem', wordBreak: 'break-all' }}>
+                            {selectedRound.job_id || '-'}
+                          </Typography>
+                        </Box>
+                      </Box>
+                    </Box>
 
-                      <Grid item xs={6}>
-                        <Typography variant="body2" color="text.secondary">
-                          Participated
-                        </Typography>
-                        <Typography variant="body1">
-                          {getParticipationStatus(selectedRound) ? 'Yes' : 'No'}
-                        </Typography>
-                      </Grid>
-
-                      <Grid item xs={6}>
-                        <Typography variant="body2" color="text.secondary">
-                          Job ID
-                        </Typography>
-                        <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.875rem' }}>
-                          {selectedRound.job_id || '-'}
-                        </Typography>
-                      </Grid>
-
-                      {/* Dataset Info */}
-                      {selectedRound.dataset_id && (
-                        <>
-                          <Grid item xs={12}>
-                            <Typography variant="h6" gutterBottom sx={{ mt: 2 }}>
-                              Dataset Information
-                            </Typography>
-                            <Divider sx={{ mb: 2 }} />
-                          </Grid>
-
-                          <Grid item xs={6}>
-                            <Typography variant="body2" color="text.secondary">
-                              Dataset Name
-                            </Typography>
-                            <Typography variant="body1" fontWeight="bold">
+                    {/* Dataset Info */}
+                    {selectedRound.dataset_id && (
+                      <Box>
+                        <Typography variant="h6" gutterBottom>Dataset Information</Typography>
+                        <Divider sx={{ mb: 2 }} />
+                        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+                          <Box>
+                            <Typography variant="body2" color="text.secondary">Dataset Name</Typography>
+                            <Typography variant="body1" fontWeight="bold" sx={{ wordBreak: 'break-all' }}>
                               {selectedRound.dataset_name || '-'}
                             </Typography>
-                          </Grid>
-
-                          <Grid item xs={6}>
-                            <Typography variant="body2" color="text.secondary">
-                              Dataset ID
-                            </Typography>
-                            <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.875rem' }}>
+                          </Box>
+                          <Box>
+                            <Typography variant="body2" color="text.secondary">Dataset ID</Typography>
+                            <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.875rem', wordBreak: 'break-all' }}>
                               {selectedRound.dataset_id}
                             </Typography>
-                          </Grid>
-                        </>
-                      )}
+                          </Box>
+                        </Box>
+                      </Box>
+                    )}
 
-                      {/* Timing */}
-                      <Grid item xs={12}>
-                        <Typography variant="h6" gutterBottom sx={{ mt: 2 }}>
-                          Timing
-                        </Typography>
+                    {/* Timing */}
+                    <Box>
+                      <Typography variant="h6" gutterBottom>Timing</Typography>
+                      <Divider sx={{ mb: 2 }} />
+                      <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+                        <Box>
+                          <Typography variant="body2" color="text.secondary">Started At</Typography>
+                          <Typography variant="body1">{formatDateTime(selectedRound.created_at)}</Typography>
+                        </Box>
+                        <Box>
+                          <Typography variant="body2" color="text.secondary">Completed At</Typography>
+                          <Typography variant="body1">{formatDateTime(selectedRound.completed_at)}</Typography>
+                        </Box>
+                        <Box>
+                          <Typography variant="body2" color="text.secondary">Duration</Typography>
+                          <Typography variant="body1">{formatDuration(selectedRound.created_at, selectedRound.completed_at)}</Typography>
+                        </Box>
+                      </Box>
+                    </Box>
+
+                    {/* Model Info */}
+                    {selectedRound.model_id && (
+                      <Box>
+                        <Typography variant="h6" gutterBottom>Model Information</Typography>
                         <Divider sx={{ mb: 2 }} />
-                      </Grid>
-
-                      <Grid item xs={6}>
-                        <Typography variant="body2" color="text.secondary">
-                          Started At
-                        </Typography>
-                        <Typography variant="body1">
-                          {formatDateTime(selectedRound.created_at)}
-                        </Typography>
-                      </Grid>
-
-                      <Grid item xs={6}>
-                        <Typography variant="body2" color="text.secondary">
-                          Completed At
-                        </Typography>
-                        <Typography variant="body1">
-                          {formatDateTime(selectedRound.completed_at)}
-                        </Typography>
-                      </Grid>
-
-                      <Grid item xs={6}>
-                        <Typography variant="body2" color="text.secondary">
-                          Duration
-                        </Typography>
-                        <Typography variant="body1">
-                          {formatDuration(selectedRound.created_at, selectedRound.completed_at)}
-                        </Typography>
-                      </Grid>
-
-                      {/* Model Info */}
-                      {selectedRound.model_id && (
-                        <>
-                          <Grid item xs={12}>
-                            <Typography variant="h6" gutterBottom sx={{ mt: 2 }}>
-                              Model Information
-                            </Typography>
-                            <Divider sx={{ mb: 2 }} />
-                          </Grid>
-
-                          <Grid item xs={12}>
-                            <Typography variant="body2" color="text.secondary">
-                              Model ID
-                            </Typography>
-                            <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.875rem' }}>
+                        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+                          <Box sx={{ gridColumn: '1 / -1' }}>
+                            <Typography variant="body2" color="text.secondary">Model ID</Typography>
+                            <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.875rem', wordBreak: 'break-all' }}>
                               {selectedRound.model_id}
                             </Typography>
-                          </Grid>
+                          </Box>
+                          <Box>
+                            <Typography variant="body2" color="text.secondary">Model Type</Typography>
+                            <Chip label={selectedRound.model_type} size="small" color="primary" sx={{ mt: 0.5 }} />
+                          </Box>
+                        </Box>
+                      </Box>
+                    )}
 
-                          <Grid item xs={6}>
-                            <Typography variant="body2" color="text.secondary">
-                              Model Type
-                            </Typography>
-                            <Chip
-                              label={selectedRound.model_type}
-                              size="small"
-                              color="primary"
-                              sx={{ mt: 0.5 }}
-                            />
-                          </Grid>
-                        </>
-                      )}
-
-                      {/* Metrics */}
-                      {selectedRound.metrics && (
-                        <>
-                          <Grid item xs={12}>
-                            <Typography variant="h6" gutterBottom sx={{ mt: 2 }}>
-                              Performance Metrics
-                            </Typography>
-                            <Divider sx={{ mb: 2 }} />
-                          </Grid>
-
-                          <Grid item xs={6}>
-                            <Typography variant="body2" color="text.secondary">
-                              Accuracy
-                            </Typography>
-                            <Typography variant="h6" color="success.main">
+                    {/* Metrics */}
+                    {selectedRound.metrics && (
+                      <Box>
+                        <Typography variant="h6" gutterBottom>Performance Metrics</Typography>
+                        <Divider sx={{ mb: 2 }} />
+                        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+                          <Box>
+                            <Typography variant="body2" color="text.secondary">Accuracy</Typography>
+                            <Typography variant="body1" fontWeight="bold" color="success.main">
                               {(selectedRound.metrics.accuracy * 100).toFixed(2)}%
                             </Typography>
-                          </Grid>
-
+                          </Box>
                           {selectedRound.metrics.loss && (
-                            <Grid item xs={6}>
-                              <Typography variant="body2" color="text.secondary">
-                                Loss
-                              </Typography>
-                              <Typography variant="h6">
-                                {selectedRound.metrics.loss.toFixed(4)}
-                              </Typography>
-                            </Grid>
+                            <Box>
+                              <Typography variant="body2" color="text.secondary">Loss</Typography>
+                              <Typography variant="body1" fontWeight="bold">{selectedRound.metrics.loss.toFixed(4)}</Typography>
+                            </Box>
                           )}
-
                           {selectedRound.metrics.f1 && (
-                            <Grid item xs={6}>
-                              <Typography variant="body2" color="text.secondary">
-                                F1 Score
-                              </Typography>
-                              <Typography variant="body1">
-                                {(selectedRound.metrics.f1 * 100).toFixed(2)}%
-                              </Typography>
-                            </Grid>
+                            <Box>
+                              <Typography variant="body2" color="text.secondary">F1 Score</Typography>
+                              <Typography variant="body1">{(selectedRound.metrics.f1 * 100).toFixed(2)}%</Typography>
+                            </Box>
                           )}
-
                           {selectedRound.metrics.precision && (
-                            <Grid item xs={6}>
-                              <Typography variant="body2" color="text.secondary">
-                                Precision
-                              </Typography>
-                              <Typography variant="body1">
-                                {(selectedRound.metrics.precision * 100).toFixed(2)}%
-                              </Typography>
-                            </Grid>
+                            <Box>
+                              <Typography variant="body2" color="text.secondary">Precision</Typography>
+                              <Typography variant="body1">{(selectedRound.metrics.precision * 100).toFixed(2)}%</Typography>
+                            </Box>
                           )}
-
                           {selectedRound.metrics.recall && (
-                            <Grid item xs={6}>
-                              <Typography variant="body2" color="text.secondary">
-                                Recall
-                              </Typography>
-                              <Typography variant="body1">
-                                {(selectedRound.metrics.recall * 100).toFixed(2)}%
-                              </Typography>
-                            </Grid>
+                            <Box>
+                              <Typography variant="body2" color="text.secondary">Recall</Typography>
+                              <Typography variant="body1">{(selectedRound.metrics.recall * 100).toFixed(2)}%</Typography>
+                            </Box>
                           )}
-
                           {selectedRound.metrics.auc && (
-                            <Grid item xs={6}>
-                              <Typography variant="body2" color="text.secondary">
-                                AUC
-                              </Typography>
-                              <Typography variant="body1">
-                                {(selectedRound.metrics.auc * 100).toFixed(2)}%
-                              </Typography>
-                            </Grid>
+                            <Box>
+                              <Typography variant="body2" color="text.secondary">AUC</Typography>
+                              <Typography variant="body1">{(selectedRound.metrics.auc * 100).toFixed(2)}%</Typography>
+                            </Box>
                           )}
-                        </>
-                      )}
+                        </Box>
+                      </Box>
+                    )}
 
-                      {/* Central Status */}
-                      {selectedRound.central_status && (
-                        <>
-                          <Grid item xs={12}>
-                            <Typography variant="h6" gutterBottom sx={{ mt: 2 }}>
-                              Central Server Info
-                            </Typography>
-                            <Divider sx={{ mb: 2 }} />
-                          </Grid>
+                    {/* Central Status */}
+                    {selectedRound.central_status && (
+                      <Box>
+                        <Typography variant="h6" gutterBottom>Central Server Info</Typography>
+                        <Divider sx={{ mb: 2 }} />
+                        <Paper variant="outlined" sx={{ p: 2, bgcolor: 'grey.50' }}>
+                          <pre style={{ margin: 0, fontSize: '0.75rem', overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                            {JSON.stringify(selectedRound.central_status, null, 2)}
+                          </pre>
+                        </Paper>
+                      </Box>
+                    )}
 
-                          <Grid item xs={12}>
-                            <Paper variant="outlined" sx={{ p: 2, bgcolor: 'grey.50' }}>
-                              <pre style={{ margin: 0, fontSize: '0.75rem', overflow: 'auto' }}>
-                                {JSON.stringify(selectedRound.central_status, null, 2)}
-                              </pre>
-                            </Paper>
-                          </Grid>
-                        </>
-                      )}
-                    </Grid>
                   </Box>
                 )}
               </DialogContent>

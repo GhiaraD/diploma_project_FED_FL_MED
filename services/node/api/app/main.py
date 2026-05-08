@@ -861,6 +861,7 @@ def get_training_status(
 @app.get("/api/infer/browse")
 def browse_hospital_images(
     directory: str = "/hospital_data",
+    limit: int = 200,
     current_user: dict = Depends(require_permission("read:datasets")),
     db: Session = Depends(get_db)
 ):
@@ -872,6 +873,7 @@ def browse_hospital_images(
     
     Args:
         directory: Path to directory to browse (must be in allowed list)
+        limit: Maximum number of files to return (default 200)
     
     Returns:
         List of image files with metadata
@@ -903,7 +905,8 @@ def browse_hospital_images(
     subdirs = []
     
     try:
-        for item in os.listdir(directory):
+        entries = sorted(os.listdir(directory))
+        for item in entries:
             item_path = os.path.join(directory, item)
             
             if os.path.isdir(item_path):
@@ -915,16 +918,17 @@ def browse_hospital_images(
             elif os.path.isfile(item_path):
                 ext = os.path.splitext(item)[1].lower()
                 if ext in image_extensions:
-                    files.append({
-                        "name": item,
-                        "path": item_path,
-                        "size": os.path.getsize(item_path),
-                        "type": "file",
-                        "extension": ext,
-                        "modified": datetime.fromtimestamp(
-                            os.path.getmtime(item_path)
-                        ).isoformat()
-                    })
+                    if len(files) < limit:
+                        files.append({
+                            "name": item,
+                            "path": item_path,
+                            "size": os.path.getsize(item_path),
+                            "type": "file",
+                            "extension": ext,
+                            "modified": datetime.fromtimestamp(
+                                os.path.getmtime(item_path)
+                            ).isoformat()
+                        })
     except PermissionError:
         raise HTTPException(
             status_code=403,
@@ -936,7 +940,8 @@ def browse_hospital_images(
         "subdirectories": subdirs,
         "files": files,
         "total_files": len(files),
-        "total_subdirs": len(subdirs)
+        "total_subdirs": len(subdirs),
+        "truncated": len(files) == limit
     }
 
 

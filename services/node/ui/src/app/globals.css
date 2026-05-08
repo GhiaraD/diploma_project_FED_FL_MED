@@ -32,6 +32,59 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+/* ── Browser autofill override ────────────────────────────────────────────── */
+
+/*
+ * Chrome/Edge/Safari inject a grey or yellow background on autofilled inputs
+ * via :-webkit-autofill. background-color cannot override it directly.
+ * The trick is to use a large inset box-shadow with the desired background
+ * colour, which visually covers the browser-injected tint.
+ */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 9999px #ffffff inset !important;
+  box-shadow: 0 0 0 9999px #ffffff inset !important;
+  -webkit-text-fill-color: rgba(0, 0, 0, 0.87) !important;
+  caret-color: rgba(0, 0, 0, 0.87);
+  transition: background-color 99999s ease-in-out 0s; /* delay browser bg transition indefinitely */
+}
+
+/* ── Custom scrollbar ─────────────────────────────────────────────────────── */
+
+/* Webkit (Chrome, Edge, Safari) */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f0f0f0;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #bdbdbd;
+  border-radius: 4px;
+  border: 2px solid #f0f0f0;
+  transition: background 0.2s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #1976d2;
+}
+
+::-webkit-scrollbar-corner {
+  background: #f0f0f0;
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #bdbdbd #f0f0f0;
+}
+
 @media (prefers-color-scheme: dark) {
   html {
     color-scheme: dark;
