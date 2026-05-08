@@ -160,7 +160,7 @@ class ModelInfo(BaseModel):
     version: str
     type: str
     labels: Optional[List[str]] = []
-    round_id: Optional[str]
+    session_id: Optional[str]  # FL session (job_id) that produced this model
     metrics: Optional[Dict[str, Any]]  # Changed from Dict[str, float] to support lists like confusion_matrix
     created_at: str
 
@@ -237,17 +237,31 @@ class InferenceResultItem(BaseModel):
 # Federated Learning
 # ============================================================================
 
-class FederatedJoinRequest(BaseModel):
-    pass  # No additional params needed
-
-
 class FederatedStatusResponse(BaseModel):
-    round_id: str
+    session_id: str
     node_id: str
-    status: Optional[str] = None  # Alias for local_status for compatibility
+    status: Optional[str] = None
     job_id: Optional[str] = None
     local_status: str
     central_status: Dict[str, Any]
+
+
+class FederatedTrainRequest(BaseModel):
+    """Parameters for starting a federated training session."""
+    dataset_id: str
+    model_name: str = "efficientnet_b0"
+    batch_size: int = 32
+
+
+class FLStartRequest(BaseModel):
+    """Parameters for starting the Flower Server on Central."""
+    num_rounds: int = Field(default=2, ge=1, le=100)
+    num_epochs: int = Field(default=2, ge=1, le=100)
+    model_name: str = "efficientnet_b0"
+    learning_rate: float = Field(default=0.001, gt=0)
+    optimizer: str = "adam"
+    min_fit_clients: int = Field(default=2, ge=1)
+    min_available_clients: int = Field(default=2, ge=1)
 
 
 # ============================================================================

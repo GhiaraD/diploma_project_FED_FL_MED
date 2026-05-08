@@ -36,8 +36,8 @@ import Layout from '@/components/Layout';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { useAuth } from '@/contexts/AuthContext';
 
-interface TrainingRound {
-  round_id: string;
+interface TrainingSession {
+  session_id: string;
   is_active: boolean;
   local_status: string;
   job_id: string | null;
@@ -52,35 +52,33 @@ interface TrainingRound {
 }
 
 export default function FederatedPage() {
-  const [rounds, setRounds] = useState<TrainingRound[]>([]);
+  const [sessions, setSessions] = useState<TrainingSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
-  const [selectedRound, setSelectedRound] = useState<TrainingRound | null>(null);
+  const [selectedSession, setSelectedSession] = useState<TrainingSession | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const { token } = useAuth();
 
   useEffect(() => {
     if (token) {
-      fetchTrainingHistory();
-      const interval = setInterval(fetchTrainingHistory, 10000); // Refresh every 10s
+      fetchHistory();
+      const interval = setInterval(fetchHistory, 10000);
       return () => clearInterval(interval);
     }
   }, [token]);
 
-  const fetchTrainingHistory = async () => {
+  const fetchHistory = async () => {
     try {
       setLoading(true);
       const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8001';
       const response = await fetch(`${apiBase}/api/federated/history`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
+        headers: { 'Authorization': `Bearer ${token}` },
       });
       if (!response.ok) throw new Error('Failed to fetch training history');
       const data = await response.json();
-      setRounds(data.rounds || []);
+      setSessions(data.rounds || []);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
@@ -89,144 +87,110 @@ export default function FederatedPage() {
     }
   };
 
-  const handleChangePage = (event: unknown, newPage: number) => {
-    setPage(newPage);
-  };
+  const handleChangePage = (_: unknown, newPage: number) => setPage(newPage);
 
   const handleChangeRowsPerPage = (event: React.ChangeEvent<HTMLInputElement>) => {
     setRowsPerPage(parseInt(event.target.value, 10));
     setPage(0);
   };
 
-  const handleViewDetails = (round: TrainingRound) => {
-    setSelectedRound(round);
+  const handleViewDetails = (session: TrainingSession) => {
+    setSelectedSession(session);
     setDetailsOpen(true);
   };
 
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case 'completed':
-        return <CheckCircleIcon color="success" />;
-      case 'failed':
-        return <CancelIcon color="error" />;
-      case 'running':
-        return <RunningIcon color="primary" />;
-      case 'pending':
-        return <PendingIcon color="warning" />;
-      default:
-        return <PendingIcon color="disabled" />;
+      case 'completed': return <CheckCircleIcon color="success" />;
+      case 'failed':    return <CancelIcon color="error" />;
+      case 'running':   return <RunningIcon color="primary" />;
+      case 'pending':   return <PendingIcon color="warning" />;
+      default:          return <PendingIcon color="disabled" />;
     }
   };
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'completed':
-        return 'success';
-      case 'failed':
-        return 'error';
-      case 'running':
-        return 'primary';
-      case 'pending':
-        return 'warning';
-      default:
-        return 'default';
+      case 'completed': return 'success';
+      case 'failed':    return 'error';
+      case 'running':   return 'primary';
+      case 'pending':   return 'warning';
+      default:          return 'default';
     }
   };
 
-  const getParticipationStatus = (round: TrainingRound) => {
-    const hasJoined = round.local_status !== 'not_started' && round.job_id !== null;
-    return hasJoined;
-  };
+  const hasParticipated = (s: TrainingSession) =>
+    s.local_status !== 'not_started' && s.job_id !== null;
 
   const formatDuration = (start: string | null, end: string | null) => {
     if (!start || !end) return '-';
-    const duration = new Date(end).getTime() - new Date(start).getTime();
-    const minutes = Math.floor(duration / 60000);
-    const seconds = Math.floor((duration % 60000) / 1000);
-    return `${minutes}m ${seconds}s`;
+    const ms = new Date(end).getTime() - new Date(start).getTime();
+    return `${Math.floor(ms / 60000)}m ${Math.floor((ms % 60000) / 1000)}s`;
   };
 
   const formatDateTime = (dateString: string | null) => {
     if (!dateString) return '-';
-    const date = new Date(dateString);
-    return date.toLocaleString('ro-RO', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
+    return new Date(dateString).toLocaleString('ro-RO', {
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit',
     });
   };
 
-  // Paginated data
-  const paginatedRounds = rounds.slice(
-    page * rowsPerPage,
-    page * rowsPerPage + rowsPerPage
-  );
+  const paginatedSessions = sessions.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
 
   return (
     <ProtectedRoute>
       <Layout title="Federated Learning">
-      <Container maxWidth="xl">
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-          <Typography variant="h4">
-            Federated Learning History
-          </Typography>
-          <Button
-            variant="outlined"
-            startIcon={<RefreshIcon />}
-            onClick={fetchTrainingHistory}
-            disabled={loading}
-          >
-            Refresh
-          </Button>
-        </Box>
-
-        {error && (
-          <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
-            {error}
-          </Alert>
-        )}
-
-        {loading && rounds.length === 0 ? (
-          <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
-            <CircularProgress />
+        <Container maxWidth="xl">
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+            <Typography variant="h4">Federated Learning History</Typography>
+            <Button variant="outlined" startIcon={<RefreshIcon />} onClick={fetchHistory} disabled={loading}>
+              Refresh
+            </Button>
           </Box>
-        ) : (
-          <>
-            <TableContainer component={Paper}>
-              <Table>
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Round ID</TableCell>
-                    <TableCell>Status</TableCell>
-                    <TableCell>Participated</TableCell>
-                    <TableCell>Dataset Used</TableCell>
-                    <TableCell>Start Time</TableCell>
-                    <TableCell>Duration</TableCell>
-                    <TableCell>Model</TableCell>
-                    <TableCell>Accuracy</TableCell>
-                    <TableCell align="center">Actions</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {paginatedRounds.length === 0 ? (
+
+          {error && (
+            <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
+              {error}
+            </Alert>
+          )}
+
+          {loading && sessions.length === 0 ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
+              <CircularProgress />
+            </Box>
+          ) : (
+            <>
+              <TableContainer component={Paper}>
+                <Table>
+                  <TableHead>
                     <TableRow>
-                      <TableCell colSpan={9} align="center">
-                        <Typography variant="body2" color="text.secondary" sx={{ py: 4 }}>
-                          No federated learning rounds yet. Training rounds will appear here automatically.
-                        </Typography>
-                      </TableCell>
+                      <TableCell>Session ID</TableCell>
+                      <TableCell>Status</TableCell>
+                      <TableCell>Participated</TableCell>
+                      <TableCell>Dataset Used</TableCell>
+                      <TableCell>Start Time</TableCell>
+                      <TableCell>Duration</TableCell>
+                      <TableCell>Model</TableCell>
+                      <TableCell>Accuracy</TableCell>
+                      <TableCell align="center">Actions</TableCell>
                     </TableRow>
-                  ) : (
-                    paginatedRounds.map((round) => {
-                      const participated = getParticipationStatus(round);
-                      
-                      return (
+                  </TableHead>
+                  <TableBody>
+                    {paginatedSessions.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={9} align="center">
+                          <Typography variant="body2" color="text.secondary" sx={{ py: 4 }}>
+                            No federated learning sessions yet. Training sessions will appear here automatically.
+                          </Typography>
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      paginatedSessions.map((s: TrainingSession) => (
                         <TableRow
-                          key={round.round_id}
+                          key={s.session_id}
                           sx={{
-                            backgroundColor: round.is_active ? 'action.hover' : 'inherit',
+                            backgroundColor: s.is_active ? 'action.hover' : 'inherit',
                             '&:hover': { backgroundColor: 'action.selected' },
                           }}
                         >
@@ -234,307 +198,264 @@ export default function FederatedPage() {
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                               <Typography
                                 variant="body2"
-                                sx={{
-                                  fontFamily: 'monospace',
-                                  fontWeight: round.is_active ? 'bold' : 'normal',
-                                }}
+                                sx={{ fontFamily: 'monospace', fontWeight: s.is_active ? 'bold' : 'normal' }}
                               >
-                                {round.round_id}
+                                {s.session_id}
                               </Typography>
-                              {round.is_active && (
-                                <Chip label="ACTIVE" color="primary" size="small" />
-                              )}
+                              {s.is_active && <Chip label="ACTIVE" color="primary" size="small" />}
                             </Box>
                           </TableCell>
                           <TableCell>
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                              {getStatusIcon(round.local_status)}
+                              {getStatusIcon(s.local_status)}
                               <Chip
-                                label={round.local_status || 'not started'}
+                                label={s.local_status || 'not started'}
                                 size="small"
-                                color={getStatusColor(round.local_status) as any}
+                                color={getStatusColor(s.local_status) as any}
                               />
                             </Box>
                           </TableCell>
                           <TableCell>
-                            {participated ? (
-                              <Chip
-                                icon={<CheckCircleIcon />}
-                                label="Yes"
-                                size="small"
-                                color="success"
-                              />
-                            ) : (
-                              <Chip label="No" size="small" color="default" />
-                            )}
+                            {hasParticipated(s)
+                              ? <Chip icon={<CheckCircleIcon />} label="Yes" size="small" color="success" />
+                              : <Chip label="No" size="small" color="default" />}
                           </TableCell>
                           <TableCell>
-                            {participated && round.dataset_name ? (
+                            {hasParticipated(s) && s.dataset_name ? (
                               <Box>
-                                <Typography variant="body2" fontWeight="medium">
-                                  {round.dataset_name}
-                                </Typography>
+                                <Typography variant="body2" fontWeight="medium">{s.dataset_name}</Typography>
                                 <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'monospace', fontSize: '0.7rem' }}>
-                                  {round.dataset_id}
+                                  {s.dataset_id}
                                 </Typography>
                               </Box>
-                            ) : participated && round.dataset_id ? (
+                            ) : hasParticipated(s) && s.dataset_id ? (
                               <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>
-                                {round.dataset_id}
+                                {s.dataset_id}
                               </Typography>
                             ) : (
-                              <Typography variant="body2" color="text.secondary">
-                                -
-                              </Typography>
+                              <Typography variant="body2" color="text.secondary">-</Typography>
                             )}
                           </TableCell>
                           <TableCell>
-                            <Typography variant="body2">
-                              {formatDateTime(round.created_at)}
-                            </Typography>
+                            <Typography variant="body2">{formatDateTime(s.created_at)}</Typography>
                           </TableCell>
                           <TableCell>
-                            <Typography variant="body2">
-                              {formatDuration(round.created_at, round.completed_at)}
-                            </Typography>
+                            <Typography variant="body2">{formatDuration(s.created_at, s.completed_at)}</Typography>
                           </TableCell>
                           <TableCell>
-                            {round.model_id ? (
+                            {s.model_id ? (
                               <Box>
                                 <Typography variant="body2" sx={{ fontSize: '0.75rem', fontFamily: 'monospace' }}>
-                                  {round.model_id.substring(0, 20)}...
+                                  {s.model_id.substring(0, 20)}...
                                 </Typography>
-                                <Chip
-                                  label={round.model_type}
-                                  size="small"
-                                  variant="outlined"
-                                  sx={{ mt: 0.5 }}
-                                />
+                                <Chip label={s.model_type} size="small" variant="outlined" sx={{ mt: 0.5 }} />
                               </Box>
                             ) : (
-                              <Typography variant="body2" color="text.secondary">
-                                -
-                              </Typography>
+                              <Typography variant="body2" color="text.secondary">-</Typography>
                             )}
                           </TableCell>
                           <TableCell>
-                            {round.metrics?.accuracy ? (
+                            {s.metrics?.accuracy ? (
                               <Typography variant="body2" fontWeight="bold">
-                                {(round.metrics.accuracy * 100).toFixed(2)}%
+                                {(s.metrics.accuracy * 100).toFixed(2)}%
                               </Typography>
                             ) : (
-                              <Typography variant="body2" color="text.secondary">
-                                -
-                              </Typography>
+                              <Typography variant="body2" color="text.secondary">-</Typography>
                             )}
                           </TableCell>
                           <TableCell align="center">
                             <Tooltip title="View Details">
-                              <IconButton
-                                size="small"
-                                color="primary"
-                                onClick={() => handleViewDetails(round)}
-                              >
+                              <IconButton size="small" color="primary" onClick={() => handleViewDetails(s)}>
                                 <VisibilityIcon />
                               </IconButton>
                             </Tooltip>
                           </TableCell>
                         </TableRow>
-                      );
-                    })
-                  )}
-                </TableBody>
-              </Table>
-              <TablePagination
-                rowsPerPageOptions={[5, 10, 25, 50]}
-                component="div"
-                count={rounds.length}
-                rowsPerPage={rowsPerPage}
-                page={page}
-                onPageChange={handleChangePage}
-                onRowsPerPageChange={handleChangeRowsPerPage}
-              />
-            </TableContainer>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+                <TablePagination
+                  rowsPerPageOptions={[5, 10, 25, 50]}
+                  component="div"
+                  count={sessions.length}
+                  rowsPerPage={rowsPerPage}
+                  page={page}
+                  onPageChange={handleChangePage}
+                  onRowsPerPageChange={handleChangeRowsPerPage}
+                />
+              </TableContainer>
 
-            {/* Details Dialog */}
-            <Dialog
-              open={detailsOpen}
-              onClose={() => setDetailsOpen(false)}
-              maxWidth="md"
-              fullWidth
-            >
-              <DialogTitle>
-                Training Round Details: {selectedRound?.round_id}
-              </DialogTitle>
-              <DialogContent>
-                {selectedRound && (
-                  <Box sx={{ pt: 2, display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {/* Details Dialog */}
+              <Dialog open={detailsOpen} onClose={() => setDetailsOpen(false)} maxWidth="md" fullWidth>
+                <DialogTitle>
+                  Training Session Details: {selectedSession?.session_id}
+                </DialogTitle>
+                <DialogContent>
+                  {selectedSession && (
+                    <Box sx={{ pt: 2, display: 'flex', flexDirection: 'column', gap: 3 }}>
 
-                    {/* General Info */}
-                    <Box>
-                      <Typography variant="h6" gutterBottom>General Information</Typography>
-                      <Divider sx={{ mb: 2 }} />
-                      <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
-                        <Box>
-                          <Typography variant="body2" color="text.secondary">Round ID</Typography>
-                          <Typography variant="body1" fontWeight="bold" sx={{ wordBreak: 'break-all' }}>
-                            {selectedRound.round_id}
-                          </Typography>
-                        </Box>
-                        <Box>
-                          <Typography variant="body2" color="text.secondary">Status</Typography>
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
-                            {getStatusIcon(selectedRound.local_status)}
-                            <Chip label={selectedRound.local_status} size="small" color={getStatusColor(selectedRound.local_status) as any} />
-                          </Box>
-                        </Box>
-                        <Box>
-                          <Typography variant="body2" color="text.secondary">Participated</Typography>
-                          <Typography variant="body1">
-                            {getParticipationStatus(selectedRound) ? 'Yes' : 'No'}
-                          </Typography>
-                        </Box>
-                        <Box>
-                          <Typography variant="body2" color="text.secondary">Job ID</Typography>
-                          <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.875rem', wordBreak: 'break-all' }}>
-                            {selectedRound.job_id || '-'}
-                          </Typography>
-                        </Box>
-                      </Box>
-                    </Box>
-
-                    {/* Dataset Info */}
-                    {selectedRound.dataset_id && (
                       <Box>
-                        <Typography variant="h6" gutterBottom>Dataset Information</Typography>
+                        <Typography variant="h6" gutterBottom>General Information</Typography>
                         <Divider sx={{ mb: 2 }} />
                         <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
                           <Box>
-                            <Typography variant="body2" color="text.secondary">Dataset Name</Typography>
+                            <Typography variant="body2" color="text.secondary">Session ID</Typography>
                             <Typography variant="body1" fontWeight="bold" sx={{ wordBreak: 'break-all' }}>
-                              {selectedRound.dataset_name || '-'}
+                              {selectedSession.session_id}
                             </Typography>
                           </Box>
                           <Box>
-                            <Typography variant="body2" color="text.secondary">Dataset ID</Typography>
+                            <Typography variant="body2" color="text.secondary">Status</Typography>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
+                              {getStatusIcon(selectedSession.local_status)}
+                              <Chip
+                                label={selectedSession.local_status}
+                                size="small"
+                                color={getStatusColor(selectedSession.local_status) as any}
+                              />
+                            </Box>
+                          </Box>
+                          <Box>
+                            <Typography variant="body2" color="text.secondary">Participated</Typography>
+                            <Typography variant="body1">{hasParticipated(selectedSession) ? 'Yes' : 'No'}</Typography>
+                          </Box>
+                          <Box>
+                            <Typography variant="body2" color="text.secondary">Job ID</Typography>
                             <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.875rem', wordBreak: 'break-all' }}>
-                              {selectedRound.dataset_id}
+                              {selectedSession.job_id || '-'}
                             </Typography>
                           </Box>
                         </Box>
                       </Box>
-                    )}
 
-                    {/* Timing */}
-                    <Box>
-                      <Typography variant="h6" gutterBottom>Timing</Typography>
-                      <Divider sx={{ mb: 2 }} />
-                      <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+                      {selectedSession.dataset_id && (
                         <Box>
-                          <Typography variant="body2" color="text.secondary">Started At</Typography>
-                          <Typography variant="body1">{formatDateTime(selectedRound.created_at)}</Typography>
+                          <Typography variant="h6" gutterBottom>Dataset Information</Typography>
+                          <Divider sx={{ mb: 2 }} />
+                          <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+                            <Box>
+                              <Typography variant="body2" color="text.secondary">Dataset Name</Typography>
+                              <Typography variant="body1" fontWeight="bold" sx={{ wordBreak: 'break-all' }}>
+                                {selectedSession.dataset_name || '-'}
+                              </Typography>
+                            </Box>
+                            <Box>
+                              <Typography variant="body2" color="text.secondary">Dataset ID</Typography>
+                              <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.875rem', wordBreak: 'break-all' }}>
+                                {selectedSession.dataset_id}
+                              </Typography>
+                            </Box>
+                          </Box>
                         </Box>
-                        <Box>
-                          <Typography variant="body2" color="text.secondary">Completed At</Typography>
-                          <Typography variant="body1">{formatDateTime(selectedRound.completed_at)}</Typography>
-                        </Box>
-                        <Box>
-                          <Typography variant="body2" color="text.secondary">Duration</Typography>
-                          <Typography variant="body1">{formatDuration(selectedRound.created_at, selectedRound.completed_at)}</Typography>
+                      )}
+
+                      <Box>
+                        <Typography variant="h6" gutterBottom>Timing</Typography>
+                        <Divider sx={{ mb: 2 }} />
+                        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+                          <Box>
+                            <Typography variant="body2" color="text.secondary">Started At</Typography>
+                            <Typography variant="body1">{formatDateTime(selectedSession.created_at)}</Typography>
+                          </Box>
+                          <Box>
+                            <Typography variant="body2" color="text.secondary">Completed At</Typography>
+                            <Typography variant="body1">{formatDateTime(selectedSession.completed_at)}</Typography>
+                          </Box>
+                          <Box>
+                            <Typography variant="body2" color="text.secondary">Duration</Typography>
+                            <Typography variant="body1">{formatDuration(selectedSession.created_at, selectedSession.completed_at)}</Typography>
+                          </Box>
                         </Box>
                       </Box>
+
+                      {selectedSession.model_id && (
+                        <Box>
+                          <Typography variant="h6" gutterBottom>Model Information</Typography>
+                          <Divider sx={{ mb: 2 }} />
+                          <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+                            <Box sx={{ gridColumn: '1 / -1' }}>
+                              <Typography variant="body2" color="text.secondary">Model ID</Typography>
+                              <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.875rem', wordBreak: 'break-all' }}>
+                                {selectedSession.model_id}
+                              </Typography>
+                            </Box>
+                            <Box>
+                              <Typography variant="body2" color="text.secondary">Model Type</Typography>
+                              <Chip label={selectedSession.model_type} size="small" color="primary" sx={{ mt: 0.5 }} />
+                            </Box>
+                          </Box>
+                        </Box>
+                      )}
+
+                      {selectedSession.metrics && (
+                        <Box>
+                          <Typography variant="h6" gutterBottom>Performance Metrics</Typography>
+                          <Divider sx={{ mb: 2 }} />
+                          <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+                            <Box>
+                              <Typography variant="body2" color="text.secondary">Accuracy</Typography>
+                              <Typography variant="body1" fontWeight="bold" color="success.main">
+                                {(selectedSession.metrics.accuracy * 100).toFixed(2)}%
+                              </Typography>
+                            </Box>
+                            {selectedSession.metrics.loss && (
+                              <Box>
+                                <Typography variant="body2" color="text.secondary">Loss</Typography>
+                                <Typography variant="body1" fontWeight="bold">{selectedSession.metrics.loss.toFixed(4)}</Typography>
+                              </Box>
+                            )}
+                            {selectedSession.metrics.f1 && (
+                              <Box>
+                                <Typography variant="body2" color="text.secondary">F1 Score</Typography>
+                                <Typography variant="body1">{(selectedSession.metrics.f1 * 100).toFixed(2)}%</Typography>
+                              </Box>
+                            )}
+                            {selectedSession.metrics.precision && (
+                              <Box>
+                                <Typography variant="body2" color="text.secondary">Precision</Typography>
+                                <Typography variant="body1">{(selectedSession.metrics.precision * 100).toFixed(2)}%</Typography>
+                              </Box>
+                            )}
+                            {selectedSession.metrics.recall && (
+                              <Box>
+                                <Typography variant="body2" color="text.secondary">Recall</Typography>
+                                <Typography variant="body1">{(selectedSession.metrics.recall * 100).toFixed(2)}%</Typography>
+                              </Box>
+                            )}
+                            {selectedSession.metrics.auc && (
+                              <Box>
+                                <Typography variant="body2" color="text.secondary">AUC</Typography>
+                                <Typography variant="body1">{(selectedSession.metrics.auc * 100).toFixed(2)}%</Typography>
+                              </Box>
+                            )}
+                          </Box>
+                        </Box>
+                      )}
+
+                      {selectedSession.central_status && (
+                        <Box>
+                          <Typography variant="h6" gutterBottom>Central Server Info</Typography>
+                          <Divider sx={{ mb: 2 }} />
+                          <Paper variant="outlined" sx={{ p: 2, bgcolor: 'grey.50' }}>
+                            <pre style={{ margin: 0, fontSize: '0.75rem', overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                              {JSON.stringify(selectedSession.central_status, null, 2)}
+                            </pre>
+                          </Paper>
+                        </Box>
+                      )}
+
                     </Box>
-
-                    {/* Model Info */}
-                    {selectedRound.model_id && (
-                      <Box>
-                        <Typography variant="h6" gutterBottom>Model Information</Typography>
-                        <Divider sx={{ mb: 2 }} />
-                        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
-                          <Box sx={{ gridColumn: '1 / -1' }}>
-                            <Typography variant="body2" color="text.secondary">Model ID</Typography>
-                            <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.875rem', wordBreak: 'break-all' }}>
-                              {selectedRound.model_id}
-                            </Typography>
-                          </Box>
-                          <Box>
-                            <Typography variant="body2" color="text.secondary">Model Type</Typography>
-                            <Chip label={selectedRound.model_type} size="small" color="primary" sx={{ mt: 0.5 }} />
-                          </Box>
-                        </Box>
-                      </Box>
-                    )}
-
-                    {/* Metrics */}
-                    {selectedRound.metrics && (
-                      <Box>
-                        <Typography variant="h6" gutterBottom>Performance Metrics</Typography>
-                        <Divider sx={{ mb: 2 }} />
-                        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
-                          <Box>
-                            <Typography variant="body2" color="text.secondary">Accuracy</Typography>
-                            <Typography variant="body1" fontWeight="bold" color="success.main">
-                              {(selectedRound.metrics.accuracy * 100).toFixed(2)}%
-                            </Typography>
-                          </Box>
-                          {selectedRound.metrics.loss && (
-                            <Box>
-                              <Typography variant="body2" color="text.secondary">Loss</Typography>
-                              <Typography variant="body1" fontWeight="bold">{selectedRound.metrics.loss.toFixed(4)}</Typography>
-                            </Box>
-                          )}
-                          {selectedRound.metrics.f1 && (
-                            <Box>
-                              <Typography variant="body2" color="text.secondary">F1 Score</Typography>
-                              <Typography variant="body1">{(selectedRound.metrics.f1 * 100).toFixed(2)}%</Typography>
-                            </Box>
-                          )}
-                          {selectedRound.metrics.precision && (
-                            <Box>
-                              <Typography variant="body2" color="text.secondary">Precision</Typography>
-                              <Typography variant="body1">{(selectedRound.metrics.precision * 100).toFixed(2)}%</Typography>
-                            </Box>
-                          )}
-                          {selectedRound.metrics.recall && (
-                            <Box>
-                              <Typography variant="body2" color="text.secondary">Recall</Typography>
-                              <Typography variant="body1">{(selectedRound.metrics.recall * 100).toFixed(2)}%</Typography>
-                            </Box>
-                          )}
-                          {selectedRound.metrics.auc && (
-                            <Box>
-                              <Typography variant="body2" color="text.secondary">AUC</Typography>
-                              <Typography variant="body1">{(selectedRound.metrics.auc * 100).toFixed(2)}%</Typography>
-                            </Box>
-                          )}
-                        </Box>
-                      </Box>
-                    )}
-
-                    {/* Central Status */}
-                    {selectedRound.central_status && (
-                      <Box>
-                        <Typography variant="h6" gutterBottom>Central Server Info</Typography>
-                        <Divider sx={{ mb: 2 }} />
-                        <Paper variant="outlined" sx={{ p: 2, bgcolor: 'grey.50' }}>
-                          <pre style={{ margin: 0, fontSize: '0.75rem', overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                            {JSON.stringify(selectedRound.central_status, null, 2)}
-                          </pre>
-                        </Paper>
-                      </Box>
-                    )}
-
-                  </Box>
-                )}
-              </DialogContent>
-              <DialogActions>
-                <Button onClick={() => setDetailsOpen(false)}>Close</Button>
-              </DialogActions>
-            </Dialog>
-          </>
-        )}
-      </Container>
-    </Layout>
+                  )}
+                </DialogContent>
+                <DialogActions>
+                  <Button onClick={() => setDetailsOpen(false)}>Close</Button>
+                </DialogActions>
+              </Dialog>
+            </>
+          )}
+        </Container>
+      </Layout>
     </ProtectedRoute>
   );
 }

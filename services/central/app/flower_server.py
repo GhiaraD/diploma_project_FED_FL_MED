@@ -109,7 +109,6 @@ def start_flower_server(
     # Configure SSL/TLS if enabled
     ssl_config = None
     if enable_ssl:
-        from pathlib import Path
         cert_path = Path(certificates_path) / "central"
         
         # Check if certificates exist
@@ -160,12 +159,14 @@ def start_flower_server(
             )
         
         print("\n[Server] ✓ FL training complete!")
-        print(f"[Server] Total rounds: {len(strategy.get_round_history())}")
-        
-        # Print final model path
-        final_model = strategy.get_current_model_path()
-        if final_model:
-            print(f"[Server] Final model: {final_model}")
+
+        if hasattr(strategy, 'get_round_history'):
+            print(f"[Server] Total rounds: {len(strategy.get_round_history())}")
+
+        if hasattr(strategy, 'get_current_model_path'):
+            final_model = strategy.get_current_model_path()
+            if final_model:
+                print(f"[Server] Final model: {final_model}")
         
     except KeyboardInterrupt:
         print("\n[Server] Interrupted by user")

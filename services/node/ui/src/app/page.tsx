@@ -210,7 +210,7 @@ export default function DashboardPage() {
                       Federated
                     </Typography>
                     <Typography variant="h6" sx={{ fontWeight: 800, mt: 0.5 }}>
-                      {lastRound ? lastRound.round_id : 'No rounds yet'}
+                      {lastRound ? lastRound.job_id : 'No sessions yet'}
                     </Typography>
                     <Typography variant="body2" sx={{ mt: 1, color: 'text.secondary' }}>
                       {lastRound ? `Status: ${lastRound.status}` : 'Pull a plan to start.'}

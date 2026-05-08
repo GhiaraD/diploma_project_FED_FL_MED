@@ -7,21 +7,17 @@ This server provides:
 
 The Management API can trigger Flower rounds and query status.
 """
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Dict, List, Optional, Any
+from typing import Dict, Optional
 from datetime import datetime
 import os
 import sys
 import subprocess
-import signal
 
 # Add node_core to path
 sys.path.insert(0, '/app/shared/python/node_core')
-
-from node_core import get_model
 
 app = FastAPI(
     title="Central FL Server - Management API",
@@ -47,46 +43,13 @@ app.add_middleware(
 STORAGE_ROOT = os.getenv("CENTRAL_STORAGE", "/storage")
 USE_FLOWER = os.getenv("USE_FLOWER", "true").lower() == "true"
 
-# Flower server process (if running)
-flower_server_process = None
-
 print(f"[Central] Storage: {STORAGE_ROOT}")
 print(f"[Central] Using Flower: {USE_FLOWER}")
-
-# Track rounds (simple in-memory for now)
-rounds_db = {}
 
 
 # ============================================================================
 # Pydantic Schemas
 # ============================================================================
-
-class RoundCreateRequest(BaseModel):
-    round_id: str
-    model_name: str = "resnet18"
-    num_classes: int = 2
-    pretrained: bool = True
-    hyperparameters: Dict = {
-        "num_epochs": 5,
-        "batch_size": 32,
-        "learning_rate": 0.001,
-        "optimizer": "adam"
-    }
-
-
-class NodeJoinRequest(BaseModel):
-    node_id: str
-
-
-class UpdateSubmitRequest(BaseModel):
-    node_id: str
-    round_id: str
-    base_model_hash: str
-    n_samples: int
-    metrics: Dict[str, Any]  # Changed from Dict[str, float] to accept all metric types
-    delta: str  # Base64 encoded delta state dict
-    delta_hash: str
-
 
 class HealthResponse(BaseModel):
     ok: bool
@@ -101,14 +64,82 @@ class HealthResponse(BaseModel):
 # Health Endpoint
 # ============================================================================
 
+FLOWER_PORT = 8080
+
+FLOWER_PATTERNS = [
+    'flower_server.py',
+    'app.flower_server',
+    'flwr.server',
+    'python -m flwr',
+    'python3 -m flwr',
+    'start_flower_server',
+]
+
+
+def _get_flower_process_info() -> Optional[Dict]:
+    """
+    Check if Flower Server is running by verifying both port and process.
+
+    Returns:
+        Dict with 'pid' and 'command' if Flower is running,
+        None if not running,
+        {'port_open': True} if port is open but process can't be verified (lsof/ps unavailable).
+    """
+    import socket
+
+    # Step 1: Check if port is open
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(1)
+        result = sock.connect_ex(("0.0.0.0", FLOWER_PORT))
+        sock.close()
+        if result != 0:
+            return None
+    except Exception:
+        return None
+
+    # Step 2: Verify it's actually Flower Server
+    try:
+        result = subprocess.run(
+            ['lsof', '-i', f':{FLOWER_PORT}', '-t'],
+            capture_output=True, text=True, timeout=2
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return None
+
+        pid = result.stdout.strip().split('\n')[0]
+
+        result = subprocess.run(
+            ['ps', '-p', pid, '-o', 'cmd='],
+            capture_output=True, text=True, timeout=2
+        )
+        if result.returncode != 0:
+            return None
+
+        cmdline = result.stdout.strip()
+        if not any(p in cmdline.lower() for p in FLOWER_PATTERNS):
+            return None
+
+        return {'pid': int(pid), 'command': cmdline}
+
+    except subprocess.TimeoutExpired:
+        return None
+    except FileNotFoundError:
+        # lsof or ps not available — port is open, assume it's Flower
+        return {'port_open': True}
+    except Exception:
+        return {'port_open': True}
+
+
+def check_flower_server_running() -> bool:
+    """Return True if Flower Server is running."""
+    return _get_flower_process_info() is not None
+
+
 @app.get("/health", response_model=HealthResponse)
 def health_check():
     """Health check endpoint."""
-    global flower_server_process
-    
-    flower_running = False
-    if flower_server_process:
-        flower_running = flower_server_process.poll() is None
+    flower_running = check_flower_server_running()
     
     return {
         "ok": True,
@@ -120,134 +151,104 @@ def health_check():
     }
 
 
-# ============================================================================
-# Round Management Endpoints
-# ============================================================================
+@app.get("/flower/status")
+def get_flower_status():
+    """
+    Get Flower Server status with process information.
 
-@app.post("/round/create")
-def create_round(request: RoundCreateRequest):
+    Returns detailed information about Flower Server availability and process.
     """
-    Create a new federated learning round.
-    
-    With Flower: This starts a Flower server in the background.
-    """
-    try:
-        print(f"[Central] Creating round {request.round_id}...")
-        
-        if USE_FLOWER:
-            # Start Flower server for this round
-            global flower_server_process
-            
-            # Store round metadata
-            rounds_db[request.round_id] = {
-                "round_id": request.round_id,
-                "model_name": request.model_name,
-                "num_classes": request.num_classes,
-                "hyperparameters": request.hyperparameters,
-                "status": "created",
-                "created_at": datetime.utcnow().isoformat()
-            }
-            
-            print(f"[Central] ✓ Round {request.round_id} created (Flower mode)")
-            print(f"[Central] Start Flower server manually or via docker-compose")
-            
-            return {
-                "status": "success",
-                "round_id": request.round_id,
-                "model_name": request.model_name,
-                "hyperparameters": request.hyperparameters,
-                "message": f"Round {request.round_id} created. Start Flower server to begin.",
-                "note": "Using Flower framework"
-            }
+    process_info = _get_flower_process_info()
+    flower_running = process_info is not None
+
+    response = {
+        "flower_server_running": flower_running,
+        "flower_server_address": f"0.0.0.0:{FLOWER_PORT}",
+        "protocol": "gRPC",
+        "ssl_enabled": os.getenv("FLOWER_ENABLE_SSL", "true").lower() == "true",
+        "status": "running" if flower_running else "stopped",
+    }
+
+    if flower_running:
+        if process_info.get('pid'):
+            response["process"] = process_info
+            response["message"] = f"Flower Server is running (PID: {process_info['pid']})"
         else:
-            # Legacy mode (not implemented in this migration)
-            raise HTTPException(
-                status_code=501,
-                detail="Legacy FL mode not available. Set USE_FLOWER=true"
-            )
-        
-    except Exception as e:
-        print(f"[Central] ✗ Failed to create round: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+            response["message"] = "Flower Server is running and accepting connections"
+    else:
+        response["message"] = "Flower Server is not running. Start it with: POST /api/fl/start"
+
+    return response
 
 
-@app.post("/round/{round_id}/join")
-def join_round(round_id: str, request: NodeJoinRequest):
+@app.post("/api/fl/start")
+def start_fl_server(
+    num_rounds: int = 2,
+    num_epochs: int = 2,
+    model_name: str = "efficientnet_b0",
+    learning_rate: float = 0.001,
+    optimizer: str = "adam",
+    min_fit_clients: int = 2,
+    min_available_clients: int = 2,
+):
     """
-    Register a node as participant in a round.
-    
-    With Flower: This is informational only.
+    Start Flower Server with the given training configuration.
+
+    The server starts in a background subprocess and waits for clients to connect.
+    Call this BEFORE triggering training on the nodes.
+
+    Args:
+        num_rounds: Number of FL rounds
+        num_epochs: Epochs per round (sent to clients via configure_fit)
+        model_name: Model architecture
+        learning_rate: Learning rate (sent to clients)
+        optimizer: Optimizer name (sent to clients)
+        min_fit_clients: Minimum clients required to start a round
+        min_available_clients: Minimum clients that must be available
     """
-    print(f"[Central] Node {request.node_id} will join round {round_id}")
-    
+    if check_flower_server_running():
+        return {
+            "status": "already_running",
+            "message": "Flower Server is already running. Stop it before starting a new session.",
+        }
+
+    import subprocess as _subprocess
+    import sys
+
+    cmd = [
+        sys.executable, "-m", "app.flower_server",
+        "--num-rounds", str(num_rounds),
+        "--num-epochs", str(num_epochs),
+        "--model-name", model_name,
+        "--learning-rate", str(learning_rate),
+        "--optimizer", optimizer,
+        "--min-fit-clients", str(min_fit_clients),
+        "--min-available-clients", str(min_available_clients),
+        "--enable-ssl", os.getenv("FLOWER_ENABLE_SSL", "true"),
+        "--certificates-path", os.getenv("CERTIFICATES_PATH", "/certificates"),
+        "--signature-policy", os.getenv("SIGNATURE_POLICY", "log"),
+        "--storage-path", STORAGE_ROOT,
+    ]
+
+    _subprocess.Popen(
+        cmd,
+        stdout=_subprocess.DEVNULL,
+        stderr=_subprocess.DEVNULL,
+        close_fds=True,
+    )
+
     return {
-        "status": "success",
-        "round_id": round_id,
-        "node_id": request.node_id,
-        "message": f"Node {request.node_id} registered for round {round_id}",
-        "note": "Using Flower - actual connection happens when client starts"
-    }
-
-
-@app.get("/round/{round_id}/plan")
-def get_round_plan(round_id: str):
-    """
-    Get training plan for a round.
-    """
-    if round_id not in rounds_db:
-        raise HTTPException(status_code=404, detail=f"Round {round_id} not found")
-    
-    round_data = rounds_db[round_id]
-    
-    return {
-        "round_id": round_id,
-        "model_name": round_data['model_name'],
-        "hyperparameters": round_data['hyperparameters'],
-        "note": "Using Flower framework"
-    }
-
-
-@app.get("/round/{round_id}/status")
-def get_round_status(round_id: str):
-    """
-    Get current status of a round.
-    """
-    if round_id not in rounds_db:
-        raise HTTPException(status_code=404, detail=f"Round {round_id} not found")
-    
-    round_data = rounds_db[round_id]
-    
-    return {
-        "round_id": round_id,
-        "status": round_data['status'],
-        "model_name": round_data['model_name'],
-        "note": "Using Flower - check Flower server logs for detailed status"
-    }
-
-
-# ============================================================================
-# List Rounds Endpoint
-# ============================================================================
-
-@app.get("/rounds/list")
-def list_rounds():
-    """
-    List all rounds.
-    """
-    rounds_list = []
-    
-    for round_id, round_data in rounds_db.items():
-        rounds_list.append({
-            "round_id": round_id,
-            "model_name": round_data['model_name'],
-            "status": round_data['status'],
-            "created_at": round_data['created_at']
-        })
-    
-    return {
-        "total_rounds": len(rounds_list),
-        "rounds": rounds_list,
-        "note": "Using Flower framework"
+        "status": "started",
+        "message": "Flower Server starting in background. Trigger training on nodes now.",
+        "config": {
+            "num_rounds": num_rounds,
+            "num_epochs": num_epochs,
+            "model_name": model_name,
+            "learning_rate": learning_rate,
+            "optimizer": optimizer,
+            "min_fit_clients": min_fit_clients,
+            "min_available_clients": min_available_clients,
+        },
     }
 
 

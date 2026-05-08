@@ -398,21 +398,18 @@ def run_inference_task(
 @celery_app.task(name="federated_training")
 def federated_training_task(
     job_id: str,
-    round_id: str,
     dataset_id: str,
-    model_name: str = "efficientnet_b0"
+    model_name: str = "efficientnet_b0",
+    batch_size: int = 32,
 ):
     """
     Federated training with Flower.
-    
-    This task starts a Flower client that connects to the Flower server
-    and participates in federated learning rounds.
-    
+
     Args:
-        job_id: Job identifier
-        round_id: FL round identifier (for tracking)
+        job_id: Job identifier (also used as session identifier for model naming)
         dataset_id: Local dataset identifier
         model_name: Model architecture name
+        batch_size: Batch size for training on this node
     """
     import sys
     
@@ -460,18 +457,15 @@ def federated_training_task(
         n_samples = dataset.num_samples
         dataset_name = dataset.name
         
-        print(f"[{settings.NODE_ID}] 🚀 Starting Flower client for round {round_id}...")
+        print(f"[{settings.NODE_ID}] 🚀 Starting Flower client for session {job_id}...")
         print(f"[{settings.NODE_ID}] 📊 Model: {model_name}")
         print(f"[{settings.NODE_ID}] 📁 Dataset: {dataset_name} ({dataset_id})")
         print(f"[{settings.NODE_ID}] 📍 Path: {dataset_path}")
         print(f"[{settings.NODE_ID}] 🔢 Samples: {n_samples}")
         
-        # Import and start Flower client directly
-        # Note: This runs in the worker container which has flower_client.py
         sys.path.insert(0, '/app/worker')
         from flower_client import start_flower_client, get_last_training_metrics
         
-        # Start Flower client (blocking call - will run until FL rounds complete)
         print(f"[{settings.NODE_ID}] 🔗 Connecting to Flower server...")
         
         start_flower_client(
@@ -481,11 +475,10 @@ def federated_training_task(
             num_classes=2,
             dataset_path=dataset_path,
             device=settings.DEVICE,
-            batch_size=32,
-            round_id=round_id,
+            batch_size=batch_size,
+            session_id=job_id,
             enable_ssl=os.getenv("ENABLE_SSL", "true").lower() == "true",
             certificates_path=os.getenv("CERTIFICATES_PATH", "/certificates"),
-            # Differential Privacy parameters
             enable_dp=os.getenv("ENABLE_DP", "false").lower() == "true",
             dp_target_epsilon=float(os.getenv("DP_TARGET_EPSILON", "1.0")),
             dp_target_delta=float(os.getenv("DP_TARGET_DELTA", "1e-5")),
@@ -496,12 +489,9 @@ def federated_training_task(
         
         print(f"[{settings.NODE_ID}] ✅ Flower client completed successfully")
         
-        # Get training metrics from the last fit() call
         metrics = get_last_training_metrics()
         
-        # The model is saved by Flower client during training
-        # Check if model file exists
-        model_id = f"{model_name}_{round_id}_flower"
+        model_id = f"{model_name}_{job_id}_flower"
         model_dir = Path(settings.STORAGE_ROOT) / "models" / "candidate"
         model_path = model_dir / f"{model_id}.pt"
         
@@ -510,15 +500,14 @@ def federated_training_task(
             print(f"[{settings.NODE_ID}] ✅ Model found at {model_path}")
             model_saved = True
             
-            # Register model in database
             from .database import Model
             db_model = Model(
                 model_id=model_id,
                 model_name=model_name,
-                version=round_id,
+                version=job_id,
                 type="candidate",
                 labels=["candidate", "federated"],
-                round_id=round_id,
+                session_id=job_id,
                 file_path=str(model_path),
                 metrics=metrics
             )
@@ -529,7 +518,7 @@ def federated_training_task(
             print(f"[{settings.NODE_ID}] ⚠️ Warning: Model file not found at {model_path}")
         
         result = {
-            'round_id': round_id,
+            'job_id': job_id,
             'model_id': model_id,
             'model_name': model_name,
             'dataset_id': dataset_id,
@@ -542,7 +531,7 @@ def federated_training_task(
         }
         
         print(f"[{settings.NODE_ID}] 📈 Final metrics: {metrics}")
-        print(f"[{settings.NODE_ID}] ✓ Training completed for round {round_id}")
+        print(f"[{settings.NODE_ID}] ✓ Training completed for session {job_id}")
         print(f"[{settings.NODE_ID}] 📝 Logs saved to {log_file}")
         
         db.close()
@@ -562,11 +551,6 @@ def federated_training_task(
         sys.stdout = old_stdout
         sys.stderr = old_stderr
         log_handle.close()
-        
-        import traceback
-        traceback.print_exc()
-        update_job_status(job_id, "failed", error=str(e))
-        raise
 
 
 if __name__ == "__main__":

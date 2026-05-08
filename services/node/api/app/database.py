@@ -114,8 +114,7 @@ class Model(Base):
     version = Column(String)  # e.g., "R-1"
     type = Column(String, index=True)  # "candidate", "deployed", "archived" (kept for backward compatibility)
     labels = Column(JSON, nullable=True)  # ["global", "active", "candidate"] - can have 1-2 labels
-    round_id = Column(String, nullable=True, index=True)  # FL round ID
-    base_model_hash = Column(String, nullable=True)  # Hash of base model for FL
+    session_id = Column(String, nullable=True, index=True)  # FL session (job_id) that produced this model
     file_path = Column(String)  # Path to .pt file
     metrics = Column(JSON, nullable=True)  # Training/validation metrics
     created_at = Column(DateTime, default=get_local_now)

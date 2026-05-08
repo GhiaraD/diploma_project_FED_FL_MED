@@ -5,9 +5,12 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime
 from pathlib import Path
+import logging
+import mimetypes
 import os
-import uuid
 import shutil
+import time
+import uuid
 import asyncio
 import json
 
@@ -17,7 +20,7 @@ from .schemas import (
     ModelInfo, ModelPromoteRequest, ModelListResponse,
     JobInfo, JobCreateResponse,
     TrainRequest, InferRequest, InferResponse,
-    FederatedJoinRequest, FederatedStatusResponse,
+    FederatedStatusResponse,
     DatasetInfo, DatasetUploadResponse, DatasetRegisterRequest,
     HealthResponse, NodeStatusResponse
 )
@@ -96,11 +99,6 @@ def node_status(
     db: Session = Depends(get_db)
 ):
     """Get node status and statistics - requires authentication."""
-    import time
-    import shutil
-    
-    # Calculate uptime (time since container started)
-    # For simplicity, we'll use a fixed start time or calculate from first job
     uptime_seconds = int(time.time() % 86400)  # Simplified: seconds since midnight
     
     # Get disk usage for storage directory
@@ -299,8 +297,6 @@ async def register_dataset(
     Returns:
         Dataset information
     """
-    import time
-    import logging
     logger = logging.getLogger(__name__)
     start_time = time.time()
     
@@ -444,7 +440,6 @@ async def set_active_dataset(
     
     The active dataset will be used by default in training operations.
     """
-    import time
     start_time = time.time()
     dataset = db.query(Dataset).filter(Dataset.dataset_id == dataset_id).first()
     
@@ -518,7 +513,6 @@ async def delete_dataset(
     Note: This only removes the dataset from the registry,
     it does NOT delete the actual files (on-premise data is preserved).
     """
-    import time
     start_time = time.time()
     dataset = db.query(Dataset).filter(Dataset.dataset_id == dataset_id).first()
     
@@ -656,9 +650,8 @@ def list_models(
                 "version": m.version,
                 "type": m.type,  # Keep for backward compatibility
                 "labels": m.labels or [],
-                "round_id": m.round_id,
-                "metrics": normalize_metrics(m.metrics),
-                "created_at": m.created_at.isoformat()
+                "session_id": m.session_id,
+                "metrics": normalize_metrics(m.metrics),                "created_at": m.created_at.isoformat()
             }
             for m in models
         ]
@@ -679,7 +672,6 @@ async def promote_model(
     - Promotes selected model to deployed
     - Recalculates labels for all models
     """
-    import time
     start_time = time.time()
     # Get model to promote
     model_to_promote = db.query(Model).filter(
@@ -751,7 +743,7 @@ async def promote_model(
         details={
             "version": model_to_promote.version,
             "metrics": model_to_promote.metrics,
-            "round_id": model_to_promote.round_id
+            "session_id": model_to_promote.session_id
         },
         response_status=200,
         start_time=start_time
@@ -789,8 +781,7 @@ def get_model_info(
         "version": model.version,
         "type": model.type,
         "labels": model.labels or [],
-        "round_id": model.round_id,
-        "base_model_hash": model.base_model_hash,
+        "session_id": model.session_id,
         "file_path": model.file_path,
         "metrics": model.metrics,
         "created_at": model.created_at.isoformat()
@@ -814,7 +805,6 @@ async def start_local_training(
     
     Creates a Celery task for training.
     """
-    import time
     start_time = time.time()
     from .tasks import train_local_model_task
     
@@ -1009,7 +999,6 @@ async def run_inference(
     Returns:
         Job information (job_id, task_id, status)
     """
-    import time
     start_time = time.time()
     from .tasks import run_inference_task
     
@@ -1083,7 +1072,6 @@ async def get_inference_results(
     db: Session = Depends(get_db)
 ):
     """Get inference results."""
-    import time
     start_time = time.time()
     job = db.query(Job).filter(Job.job_id == job_id).first()
     
@@ -1205,7 +1193,6 @@ def serve_image(
         raise HTTPException(status_code=400, detail="Path is not a file")
     
     # Determine content type based on file extension
-    import mimetypes
     content_type, _ = mimetypes.guess_type(path)
     if not content_type:
         content_type = "application/octet-stream"
@@ -1226,149 +1213,91 @@ def serve_image(
 # Federated Learning Endpoints
 # ============================================================================
 
-@app.post("/api/federated/join/{round_id}")
-async def join_federated_round(
-    round_id: str,
-    request_data: FederatedJoinRequest,
-    request: Request,
-    current_user: dict = Depends(require_permission("write:federated")),
-    db: Session = Depends(get_db)
-):
-    """
-    Join a federated learning round.
-    
-    With Flower, this is informational only - the actual connection
-    happens when the Flower client starts.
-    """
-    import time
-    start_time = time.time()
-    # Log federated join
-    await log_federated_action(
-        action="joined",
-        user_id=current_user["id"],
-        request=request,
-        db=db,
-        round_id=round_id,
-        details={
-            "node_id": settings.NODE_ID
-        },
-        response_status=200,
-        start_time=start_time
-    )
-    
-    # Just log the intent to join
-    print(f"[{settings.NODE_ID}] Node will join round {round_id} when training starts")
-    
-    return {
-        "status": "success",
-        "round_id": round_id,
-        "node_id": settings.NODE_ID,
-        "message": f"Node {settings.NODE_ID} will join round {round_id}",
-        "note": "Using Flower framework - connection happens during training"
-    }
-
-
-@app.post("/api/federated/train/{round_id}", response_model=JobCreateResponse)
+@app.post("/api/federated/train", response_model=JobCreateResponse)
 async def start_federated_training(
-    round_id: str,
     dataset_id: str,
     model_name: str = "efficientnet_b0",
+    batch_size: int = 32,
     request: Request = None,
     background_tasks: BackgroundTasks = None,
     current_user: dict = Depends(require_permission("write:federated")),
     db: Session = Depends(get_db)
 ):
     """
-    Start federated training for a round.
-    
-    Creates a Celery task for FL training.
-    
+    Start federated training.
+
+    Creates a Celery task for FL training. The job_id serves as the unique
+    session identifier for tracking purposes.
+
     Args:
-        round_id: FL round identifier
         dataset_id: Dataset to use for training
         model_name: Model architecture (resnet18, densenet121, efficientnet_b0)
+        batch_size: Batch size for training on this node
     """
-    import time
     start_time = time.time()
     from .tasks import federated_training_task
-    
-    # Create job record
-    job_id = f"fl_train_{round_id}_{uuid.uuid4().hex[:8]}"
-    
+
+    job_id = f"fl_{uuid.uuid4().hex[:8]}"
+
     job = Job(
         job_id=job_id,
         job_type="federated_train",
         status="pending",
-        params={"round_id": round_id, "dataset_id": dataset_id, "model_name": model_name}
+        params={"dataset_id": dataset_id, "model_name": model_name, "batch_size": batch_size}
     )
     db.add(job)
     db.commit()
-    
-    # Log federated training start
+
     await log_federated_action(
         action="training_started",
         user_id=current_user["id"],
         request=request,
         db=db,
-        round_id=round_id,
+        session_id=job_id,
         details={
             "job_id": job_id,
             "dataset_id": dataset_id,
             "model_name": model_name,
+            "batch_size": batch_size,
             "node_id": settings.NODE_ID
         },
         response_status=200,
         start_time=start_time
     )
-    
-    # Start Celery task
+
     task = federated_training_task.delay(
         job_id=job_id,
-        round_id=round_id,
         dataset_id=dataset_id,
-        model_name=model_name
+        model_name=model_name,
+        batch_size=batch_size,
     )
-    
+
     return {
         "job_id": job_id,
         "task_id": task.id,
-        "status": "pending"
+        "status": "pending",
     }
 
 
-@app.get("/api/federated/status/{round_id}", response_model=FederatedStatusResponse)
+@app.get("/api/federated/status/{job_id}", response_model=FederatedStatusResponse)
 def get_federated_status(
-    round_id: str,
+    job_id: str,
     current_user: dict = Depends(require_permission("read:federated")),
     db: Session = Depends(get_db)
 ):
-    """
-    Get federated learning status for a round.
-    
-    With Flower, we check local job status only.
-    """
-    # Get local job status
-    # Query all federated_train jobs and filter in Python (SQLite compatible)
-    jobs = db.query(Job).filter(
+    """Get federated learning status for a session by job_id."""
+    job = db.query(Job).filter(
+        Job.job_id == job_id,
         Job.job_type == "federated_train"
-    ).order_by(Job.created_at.desc()).all()
-    
-    # Filter by round_id in Python (works with both SQLite and PostgreSQL)
-    job = None
-    for j in jobs:
-        if j.params and j.params.get("round_id") == round_id:
-            job = j
-            break
-    
+    ).first()
+
     if job:
         local_status = job.status
-        job_id = job.job_id
     else:
         local_status = "not_started"
-        job_id = None
-    
+
     return {
-        "round_id": round_id,
+        "session_id": job_id,
         "node_id": settings.NODE_ID,
         "status": local_status,
         "job_id": job_id,
@@ -1385,91 +1314,54 @@ def get_federated_history(
     db: Session = Depends(get_db)
 ):
     """
-    Get history of all federated learning rounds this node participated in.
-    
-    Returns rounds sorted by most recent first, with active rounds at the top.
+    Get history of all federated learning sessions this node participated in.
+
+    Each job is its own session, identified by job_id.
+    Returns sessions sorted by most recent first, active sessions at the top.
     """
-    import requests
-    
-    # Get all FL training jobs from database
     jobs = db.query(Job).filter(
         Job.job_type == "federated_train"
     ).order_by(Job.created_at.desc()).all()
-    
-    # Get unique round IDs
-    round_ids = list(set([job.params.get("round_id") for job in jobs if job.params.get("round_id")]))
-    
-    # Fetch status for each round from central server
-    rounds_history = []
-    
-    for round_id in round_ids:
-        try:
-            # Get central server status
-            response = requests.get(
-                f"{settings.CENTRAL_URL}/round/{round_id}/status",
-                timeout=5
-            )
-            
-            if response.ok:
-                central_status = response.json()
-            else:
-                central_status = None
-        except:
-            central_status = None
-        
-        # Get local jobs for this round
-        round_jobs = [j for j in jobs if j.params.get("round_id") == round_id]
-        latest_job = round_jobs[0] if round_jobs else None
-        
-        # Get model info if exists
+
+    sessions = []
+    for job in jobs:
+        # Get model linked to this job
         model = db.query(Model).filter(
-            Model.round_id == round_id
+            Model.session_id == job.job_id
         ).order_by(Model.created_at.desc()).first()
-        
-        # Determine if round is active
-        is_active = False
-        if central_status:
-            central_round_status = central_status.get("status", "")
-            is_active = central_round_status in ["created", "training", "collecting"]
-        
-        # Extract dataset info from job result or params
-        dataset_id = None
+
+        is_active = job.status in ["pending", "running"]
+
+        dataset_id = job.params.get("dataset_id") if job.params else None
         dataset_name = None
-        if latest_job and latest_job.result:
-            dataset_id = latest_job.result.get("dataset_id")
-            dataset_name = latest_job.result.get("dataset_name")
-        if not dataset_id and latest_job:
-            dataset_id = latest_job.params.get("dataset_id")
-        
-        # Extract metrics from job result
-        metrics = None
-        if latest_job and latest_job.result:
-            metrics = latest_job.result.get("metrics")
-        
-        # Build round info
-        round_info = {
-            "round_id": round_id,
+        if job.result:
+            dataset_name = job.result.get("dataset_name")
+
+        metrics = job.result.get("metrics") if job.result else None
+
+        sessions.append({
+            "session_id": job.job_id,
             "is_active": is_active,
-            "local_status": latest_job.status if latest_job else "not_started",
-            "job_id": latest_job.job_id if latest_job else None,
-            "created_at": latest_job.created_at.isoformat() if latest_job else None,
-            "completed_at": latest_job.completed_at.isoformat() if latest_job and latest_job.completed_at else None,
+            "local_status": job.status,
+            "job_id": job.job_id,
+            "created_at": job.created_at.isoformat(),
+            "completed_at": job.completed_at.isoformat() if job.completed_at else None,
             "model_id": model.model_id if model else None,
             "model_type": model.type if model else None,
             "dataset_id": dataset_id,
             "dataset_name": dataset_name,
             "metrics": metrics,
-            "central_status": central_status
-        }
-        
-        rounds_history.append(round_info)
-    
-    # Sort: active rounds first, then by created_at descending
-    rounds_history.sort(key=lambda x: (not x["is_active"], x["created_at"] or ""), reverse=True)
-    
+            "central_status": {
+                "note": "Using Flower framework - check Flower server logs for session status"
+            }
+        })
+
+    # Active sessions first, then by created_at descending
+    sessions.sort(key=lambda x: (not x["is_active"], x["created_at"] or ""), reverse=True)
+
     return {
-        "total_rounds": len(rounds_history),
-        "rounds": rounds_history
+        "total_rounds": len(sessions),
+        "rounds": sessions
     }
 
 
@@ -1539,7 +1431,6 @@ async def get_job_status(
     Returns:
         Detailed job information including Celery task status
     """
-    import time
     start_time = time.time()
     job = db.query(Job).filter(Job.job_id == job_id).first()
     
@@ -1595,7 +1486,6 @@ async def get_job_status(
     }
 
 
-@app.get("/api/jobs/{job_id}/logs")
 @app.get("/api/jobs/{job_id}/logs")
 async def stream_job_logs(
     job_id: str,

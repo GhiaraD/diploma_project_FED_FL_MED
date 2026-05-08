@@ -140,7 +140,7 @@ async def log_federated_action(
     user_id: str,
     request: Request,
     db: Session,
-    round_id: Optional[str] = None,
+    session_id: Optional[str] = None,
     details: Optional[Dict[str, Any]] = None,
     response_status: int = 200,
     start_time: Optional[float] = None
@@ -148,7 +148,7 @@ async def log_federated_action(
     """Log federated learning actions."""
     event_data = {
         "action": action,
-        "round_id": round_id,
+        "session_id": session_id,
         **(details or {})
     }
     

@@ -41,9 +41,6 @@ from node_core import (
 # Global variable to store last training metrics
 _last_training_metrics = None
 
-# Global variable to store trained model
-_trained_model = None
-
 
 class FedMedClient(fl.client.NumPyClient):
     """
@@ -252,7 +249,7 @@ class FedMedClient(fl.client.NumPyClient):
             - Number of training samples
             - Metrics dict
         """
-        global _last_training_metrics, _trained_model
+        global _last_training_metrics
         
         # Get current round from config
         current_round = config.get("server_round", "?")
@@ -411,7 +408,6 @@ class FedMedClient(fl.client.NumPyClient):
         
         # Store metrics globally for retrieval after training
         _last_training_metrics = metrics
-        _trained_model = self.model
         
         print(f"\n{'='*70}")
         print(f"[{self.node_id}] ✅ ROUND {current_round} COMPLETE")
@@ -597,17 +593,6 @@ def get_last_training_metrics():
     return _last_training_metrics
 
 
-def get_trained_model():
-    """
-    Get the trained model from the last training round.
-    
-    Returns:
-        Trained PyTorch model or None if no training has occurred
-    """
-    global _trained_model
-    return _trained_model
-
-
 def start_flower_client(
     server_address: str,
     node_id: str,
@@ -616,7 +601,7 @@ def start_flower_client(
     dataset_path: str,
     device: str = "cpu",
     batch_size: int = 32,
-    round_id: str = None,
+    session_id: str = None,
     enable_ssl: bool = True,
     certificates_path: str = "/certificates",
     # Differential Privacy parameters
@@ -638,8 +623,7 @@ def start_flower_client(
         dataset_path: Path to dataset
         device: Device (cpu/cuda)
         batch_size: Batch size
-        round_id: FL round identifier (for model saving)
-        enable_ssl: Enable mTLS for secure communication
+        session_id: FL session identifier (for model saving)        enable_ssl: Enable mTLS for secure communication
         certificates_path: Path to SSL certificates
         enable_dp: Enable Differential Privacy
         dp_target_epsilon: Target epsilon for DP
@@ -729,30 +713,30 @@ def start_flower_client(
         print(f"\n[{node_id}] ✓ Disconnected from server")
         
         # Save the trained model after FL completes
-        if round_id:
+        if session_id:
             from node_core import save_model
-            model_id = f"{model_name}_{round_id}_flower"
+            model_id = f"{model_name}_{session_id}_flower"
             model_dir = Path("/storage/models/candidate")
             model_dir.mkdir(parents=True, exist_ok=True)
             model_path = model_dir / f"{model_id}.pt"
-            
+
             print(f"[{node_id}] 💾 Saving trained model to {model_path}...")
-            
-            # Get metrics
+
             global _last_training_metrics
             metrics = _last_training_metrics
-            
-            # Save model with metadata
+
             metadata = {
-                'round_id': round_id,
+                'session_id': session_id,
                 'model_name': model_name,
                 'training_type': 'federated',
                 'node_id': node_id,
                 'metrics': metrics
             }
-            
+
             save_model(client.model, str(model_path), metadata)
             print(f"[{node_id}] ✅ Model saved successfully")
+        else:
+            print(f"[{node_id}] ⚠️  session_id not provided — trained model will NOT be saved to disk")
         
     except KeyboardInterrupt:
         print(f"\n[{node_id}] Interrupted by user")
@@ -764,7 +748,7 @@ def start_flower_client(
 def main():
     """Main entry point."""
     # Get configuration from environment
-    server_address = os.getenv("FLOWER_SERVER", "central:8082")
+    server_address = os.getenv("FLOWER_SERVER", "central:8080")
     node_id = os.getenv("NODE_ID", "node1")
     model_name = os.getenv("MODEL_NAME", "resnet18")
     num_classes = int(os.getenv("NUM_CLASSES", "2"))

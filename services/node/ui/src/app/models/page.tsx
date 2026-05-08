@@ -32,7 +32,7 @@ interface Model {
   version: string;
   type: string;
   labels: string[];
-  round_id: string | null;
+  session_id: string | null;
   metrics: any;
   created_at: string;
 }
@@ -228,7 +228,7 @@ export default function ModelsPage() {
                   <TableCell>Architecture</TableCell>
                   <TableCell>Version</TableCell>
                   <TableCell>Labels</TableCell>
-                  <TableCell>Round ID</TableCell>
+                  <TableCell>Session</TableCell>
                   <TableCell>Accuracy</TableCell>
                   <TableCell>Created At</TableCell>
                   <TableCell align="center">Actions</TableCell>
@@ -268,9 +268,8 @@ export default function ModelsPage() {
                         </Box>
                       </TableCell>
                       <TableCell>
-                        {model.round_id || '-'}
-                      </TableCell>
-                      <TableCell>
+                        {model.session_id || '-'}
+                      </TableCell>                      <TableCell>
                         {model.metrics?.accuracy 
                           ? (model.metrics.accuracy * 100).toFixed(2) + '%'
                           : '-'}
