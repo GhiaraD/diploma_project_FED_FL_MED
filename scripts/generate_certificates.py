@@ -370,7 +370,7 @@ class CertificateAuthority:
         )
         
         # Node Certificates
-        for node_id in ["node1", "node2", "node3"]:
+        for node_id in ["node1", "node2", "node3", "node4", "node5"]:
             print("\n" + "-"*70)
             print(f"{node_id.upper()} CERTIFICATES")
             print("-"*70)
@@ -411,11 +411,11 @@ class CertificateAuthority:
         print("-"*70)
         
         ca_cert_content = (self.ca_path / "ca-cert.pem").read_bytes()
-        
+
         (self.central_path / "ca-cert.pem").write_bytes(ca_cert_content)
         print(f"✓ CA cert copied to: {self.central_path}")
-        
-        for node_id in ["node1", "node2", "node3"]:
+
+        for node_id in ["node1", "node2", "node3", "node4", "node5"]:
             node_path = self.nodes_path / node_id
             (node_path / "ca-cert.pem").write_bytes(ca_cert_content)
             print(f"✓ CA cert copied to: {node_path}")
@@ -438,7 +438,9 @@ class CertificateAuthority:
         print(f"  └── nodes/")
         print(f"      ├── node1/ (same structure)")
         print(f"      ├── node2/ (same structure)")
-        print(f"      └── node3/ (same structure)")
+        print(f"      ├── node3/ (same structure)")
+        print(f"      ├── node4/ (same structure)")
+        print(f"      └── node5/ (same structure)")
         
         print("\n⚠️  SECURITY NOTES:")
         print("  • Private keys have 600 permissions (owner read/write only)")

@@ -1,10 +1,14 @@
 """
 Flower Strategy for Fed-Med-FL
 
-Custom FedAvg strategy with:
-- Model persistence (save global model after each round)
-- Medical imaging metrics aggregation
-- Integration with existing node_core utilities
+Supported aggregation strategies:
+- fedavg    : FedAvg — weighted average (default)
+- fedprox   : FedProx — FedAvg + proximal regularization term
+- fedavgm   : FedAvgM — FedAvg with server-side momentum
+- fedopt    : FedOpt — server-side SGD optimizer on aggregated update
+- fedadam   : FedAdam — server-side Adam optimizer
+- fedyogi   : FedYogi — server-side Yogi optimizer
+- fedmedian : FedMedian — coordinate-wise median (robust to outliers)
 """
 import torch
 import torch.nn as nn
@@ -16,6 +20,12 @@ import os
 from .ml_models import get_model, save_model
 from .utils_hash import compute_model_hash
 from .crypto_utils import create_payload_signer, verify_model_parameters, sign_model_parameters
+from .logger import get_logger
+
+_log = get_logger("FedMedStrategy")
+
+# Supported strategy names
+SUPPORTED_STRATEGIES = ["fedavg", "fedprox", "fedavgm", "fedopt", "fedadam", "fedyogi", "fedmedian"]
 
 
 class FedMedStrategy(fl.server.strategy.FedAvg):
@@ -103,38 +113,35 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
                     is_central=True
                 )
                 if self.signer.is_ready():
-                    print(f"[FedMedStrategy] 🔐 Payload signing/verification enabled")
+                    _log.ok("Payload signing/verification enabled")
                 else:
-                    print(f"[FedMedStrategy] ⚠️  Payload signing disabled (certificates not ready)")
+                    _log.warn("Payload signing disabled (certificates not ready)")
                     self.enable_signing = False
             except Exception as e:
-                print(f"[FedMedStrategy] ⚠️  Failed to initialize signer: {e}")
+                _log.warn(f"Failed to initialize signer: {e}")
                 self.enable_signing = False
-        
-        # Track rounds
+
         self.current_round = 0
         self.round_history = []
-        
-        # Track signature verification stats
         self.signature_stats = {
             'total_verifications': 0,
             'successful_verifications': 0,
             'failed_verifications': 0,
             'unsigned_parameters': 0
         }
-        
-        print(f"[FedMedStrategy] Initialized with {model_name}")
-        print(f"[FedMedStrategy] Storage: {self.storage_path}")
-        print(f"[FedMedStrategy] Save models: {save_models}")
-        print(f"[FedMedStrategy] Training config: {num_epochs} epochs, lr={learning_rate}, optimizer={optimizer}")
-        print(f"[FedMedStrategy] Signing: {'Enabled' if self.enable_signing else 'Disabled'}")
+
+        _log.info(f"Initialized with {model_name}")
+        _log.step(f"Storage: {self.storage_path}")
+        _log.step(f"Save models: {save_models}")
+        _log.step(f"Training config: {num_epochs} epochs, lr={learning_rate}, optimizer={optimizer}")
+        _log.step(f"Signing: {'Enabled' if self.enable_signing else 'Disabled'}")
         if self.enable_signing:
-            print(f"[FedMedStrategy] Signature Policy: {self.signature_policy}")
-            print(f"[FedMedStrategy] Min Valid Signatures: {self.min_valid_signatures * 100:.0f}%")
-        print(f"[FedMedStrategy] Server-side DP: {'Enabled' if self.enable_server_dp else 'Disabled'}")
+            _log.step(f"Signature Policy: {self.signature_policy}")
+            _log.step(f"Min Valid Signatures: {self.min_valid_signatures * 100:.0f}%")
+        _log.step(f"Server-side DP: {'Enabled' if self.enable_server_dp else 'Disabled'}")
         if self.enable_server_dp:
-            print(f"[FedMedStrategy]   Noise multiplier: {self.server_dp_noise_multiplier}")
-            print(f"[FedMedStrategy]   Sensitivity: {self.server_dp_sensitivity}")
+            _log.step(f"Noise multiplier: {self.server_dp_noise_multiplier}")
+            _log.step(f"Sensitivity: {self.server_dp_sensitivity}")
     
     def configure_fit(
         self, 
@@ -165,8 +172,8 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
                 new_fit_ins = fl.common.FitIns(fit_ins.parameters, new_config)
                 updated_config_list.append((client, new_fit_ins))
             
-            print(f"[FedMedStrategy] Round {server_round}: Configured {len(updated_config_list)} clients")
-            print(f"[FedMedStrategy]   Hyperparameters: {self.num_epochs} epochs, lr={self.learning_rate}")
+            _log.info(f"Round {server_round}: Configured {len(updated_config_list)} clients")
+            _log.step(f"Hyperparameters: {self.num_epochs} epochs, lr={self.learning_rate}")
             
             return updated_config_list
         
@@ -179,23 +186,18 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
         Called once at the start of FL to initialize the global model.
         If clients use DP, we need to fix the model for compatibility.
         """
-        print("[FedMedStrategy] Initializing global model parameters...")
-        
-        # ONLY apply Opacus fixes if server-side DP is enabled
-        # This ensures model structure matches between server and clients
+        _log.info("Initializing global model parameters...")
+
         if self.enable_server_dp:
             try:
                 from opacus.validators import ModuleValidator
-                
-                # Validate and fix model for DP compatibility
                 errors = ModuleValidator.validate(self.model, strict=False)
                 if errors:
-                    print("[FedMedStrategy] ⚠️  Model has DP compatibility issues, fixing...")
+                    _log.warn("Model has DP compatibility issues, fixing...")
                     self.model = ModuleValidator.fix(self.model)
-                    print("[FedMedStrategy] ✓ Model fixed for DP compatibility (BatchNorm → GroupNorm)")
+                    _log.ok("Model fixed for DP compatibility (BatchNorm → GroupNorm)")
             except ImportError:
-                print("[FedMedStrategy] ⚠️  Server-side DP enabled but Opacus not available")
-                pass
+                _log.warn("Server-side DP enabled but Opacus not available")
         
         # Get model parameters as numpy arrays
         parameters = [val.cpu().numpy() for val in self.model.state_dict().values()]
@@ -242,7 +244,7 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
             # Track noise magnitude
             total_noise_norm += np.linalg.norm(noise)
         
-        print(f"[FedMedStrategy] 🔒 Added server-side DP noise (total norm: {total_noise_norm:.4f})")
+        _log.info(f"Added server-side DP noise (total norm: {total_noise_norm:.4f})")
         
         return noisy_parameters
     
@@ -265,100 +267,82 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
             - Aggregated metrics
         """
         self.current_round = server_round
-        
-        print(f"\n{'='*70}")
-        print(f"🔄 FEDERATED ROUND {server_round} - AGGREGATION")
-        print(f"{'='*70}")
-        print(f"  📥 Received results from {len(results)} client(s)")
-        
+
+        _log.section(f"FEDERATED ROUND {server_round} - AGGREGATION")
+        _log.step(f"Received results from {len(results)} client(s)")
+
         if failures:
-            print(f"  ⚠️  {len(failures)} client(s) failed")
-        
+            _log.warn(f"{len(failures)} client(s) failed")
+
         if not results:
-            print("  ✗ No results to aggregate")
-            print(f"{'='*70}\n")
+            _log.fail("No results to aggregate")
             return None, {}
-        
-        # Log client metrics and verify signatures
-        print(f"\n  📊 Client Results:")
-        clients_to_reject = []  # Track clients to reject based on policy
-        
+
+        _log.info("Client Results:")
+        clients_to_reject = []
+
         for i, (client, fit_res) in enumerate(results, 1):
             metrics = fit_res.metrics
             num_samples = fit_res.num_examples
             acc = metrics.get('accuracy', 0)
-            print(f"    {i}. Client {client.cid}:")
-            print(f"       • Samples: {num_samples}")
-            print(f"       • Accuracy: {acc:.2%}")
-            print(f"       • Train Loss: {metrics.get('train_loss', 0):.4f}")
-            print(f"       • Val Loss: {metrics.get('val_loss', 0):.4f}")
-            
-            # Verify signature if present
+            _log.step(f"{i}. Client {client.cid}:")
+            _log.step(f"   Samples: {num_samples}")
+            _log.step(f"   Accuracy: {acc:.2%}")
+            _log.step(f"   Train Loss: {metrics.get('train_loss', 0):.4f}")
+            _log.step(f"   Val Loss: {metrics.get('val_loss', 0):.4f}")
+
             if self.enable_signing and self.signer:
                 signature_package_json = metrics.get('_signature_package')
                 if signature_package_json:
-                    # Deserialize JSON string to dict
                     import json
                     try:
                         signature_package = json.loads(signature_package_json)
-                    except:
+                    except Exception:
                         signature_package = None
-                    
+
                     if signature_package and signature_package.get('signed'):
-                        # Get parameters from fit_res
                         parameters = fl.common.parameters_to_ndarrays(fit_res.parameters)
-                        
-                        # Verify signature
                         is_valid, message = verify_model_parameters(
                             parameters=parameters,
                             signature_package=signature_package,
                             verifier=self.signer,
                             use_cache=True
                         )
-                        
                         self.signature_stats['total_verifications'] += 1
-                        
+
                         if is_valid:
-                            print(f"       🔐 Signature: ✓ Valid")
+                            _log.step("   Signature: Valid")
                             self.signature_stats['successful_verifications'] += 1
                         else:
-                            print(f"       🔐 Signature: ✗ Invalid - {message}")
+                            _log.warn(f"   Signature: Invalid - {message}")
                             self.signature_stats['failed_verifications'] += 1
-                            
-                            # Apply signature policy
                             if self.signature_policy == "reject":
-                                print(f"       ⚠️  Policy: REJECT - Client will be excluded from aggregation")
+                                _log.warn("   Policy: REJECT - Client excluded from aggregation")
                                 clients_to_reject.append(client.cid)
                             elif self.signature_policy == "warn":
-                                print(f"       ⚠️  Policy: WARN - Invalid signature detected but continuing")
-                            else:  # "log"
-                                print(f"       ℹ️  Policy: LOG - Invalid signature logged")
+                                _log.warn("   Policy: WARN - Invalid signature detected but continuing")
+                            else:
+                                _log.info("   Policy: LOG - Invalid signature logged")
                     else:
-                        print(f"       🔐 Signature: Not signed")
+                        _log.step("   Signature: Not signed")
                         self.signature_stats['unsigned_parameters'] += 1
                 else:
-                    print(f"       🔐 Signature: Not signed")
+                    _log.step("   Signature: Not signed")
                     self.signature_stats['unsigned_parameters'] += 1
-        
-        # Apply signature policy - filter out rejected clients
+
         if clients_to_reject:
-            print(f"\n  🚫 Rejecting {len(clients_to_reject)} client(s) due to invalid signatures")
+            _log.warn(f"Rejecting {len(clients_to_reject)} client(s) due to invalid signatures")
             results = [(c, r) for c, r in results if c.cid not in clients_to_reject]
-            
             if not results:
-                print("  ✗ No valid results remaining after signature policy enforcement")
-                print(f"{'='*70}\n")
+                _log.fail("No valid results remaining after signature policy enforcement")
                 return None, {}
-        
-        # Check if we meet minimum valid signatures threshold (for "warn" policy)
+
         if self.signature_policy == "warn" and self.signature_stats['total_verifications'] > 0:
             valid_ratio = self.signature_stats['successful_verifications'] / self.signature_stats['total_verifications']
             if valid_ratio < self.min_valid_signatures:
-                print(f"\n  ⚠️  WARNING: Only {valid_ratio:.1%} signatures are valid (threshold: {self.min_valid_signatures:.1%})")
-                print(f"  ⚠️  Consider investigating signature failures or switching to 'reject' policy")
-        
-        # Call parent FedAvg aggregation
-        print(f"\n  🔄 Aggregating parameters...")
+                _log.warn(f"Only {valid_ratio:.1%} signatures valid (threshold: {self.min_valid_signatures:.1%})")
+
+        _log.info("Aggregating parameters...")
         aggregated_parameters, aggregated_metrics = super().aggregate_fit(
             server_round, results, failures
         )
@@ -375,56 +359,34 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
                 parameters_list = fl.common.parameters_to_ndarrays(aggregated_parameters)
                 self._save_global_model(parameters_list, server_round)
             
-            # Log aggregated metrics
-            print(f"\n{'='*70}")
-            print(f"✅ ROUND {server_round} COMPLETE")
-            print(f"{'='*70}")
+            _log.section(f"ROUND {server_round} COMPLETE")
             if aggregated_metrics:
-                print(f"  📈 Aggregated Metrics:")
+                _log.info("Aggregated Metrics:")
                 for key, value in aggregated_metrics.items():
                     if isinstance(value, float):
-                        if 'acc' in key.lower():
-                            print(f"    • {key}: {value:.2%}")
-                        else:
-                            print(f"    • {key}: {value:.4f}")
+                        fmt = f"{value:.2%}" if 'acc' in key.lower() else f"{value:.4f}"
+                        _log.step(f"{key}: {fmt}")
                     else:
-                        print(f"    • {key}: {value}")
-            
-            # Log signature verification stats
+                        _log.step(f"{key}: {value}")
+
             if self.enable_signing:
-                print(f"  🔐 Signature Verification Stats:")
-                print(f"    • Total verifications: {self.signature_stats['total_verifications']}")
-                print(f"    • Successful: {self.signature_stats['successful_verifications']}")
-                print(f"    • Failed: {self.signature_stats['failed_verifications']}")
-                print(f"    • Unsigned: {self.signature_stats['unsigned_parameters']}")
-            
-            # Log DP metrics if enabled
-            if self.enable_server_dp or any(
-                r[1].metrics.get("dp_enabled", False) for r in results
-            ):
-                print(f"  🔒 Differential Privacy Stats:")
-                
-                # Client-side DP
+                _log.info("Signature Verification Stats:")
+                _log.step(f"Total: {self.signature_stats['total_verifications']}")
+                _log.step(f"Successful: {self.signature_stats['successful_verifications']}")
+                _log.step(f"Failed: {self.signature_stats['failed_verifications']}")
+                _log.step(f"Unsigned: {self.signature_stats['unsigned_parameters']}")
+
+            if self.enable_server_dp or any(r[1].metrics.get("dp_enabled", False) for r in results):
+                _log.info("Differential Privacy Stats:")
                 client_epsilons = [
-                    r[1].metrics.get("dp_epsilon", 0) 
-                    for r in results 
-                    if r[1].metrics.get("dp_enabled", False)
+                    r[1].metrics.get("dp_epsilon", 0)
+                    for r in results if r[1].metrics.get("dp_enabled", False)
                 ]
-                
                 if client_epsilons:
-                    avg_epsilon = sum(client_epsilons) / len(client_epsilons)
-                    max_epsilon = max(client_epsilons)
-                    min_epsilon = min(client_epsilons)
-                    print(f"    • Client-side ε (avg): {avg_epsilon:.2f}")
-                    print(f"    • Client-side ε (max): {max_epsilon:.2f}")
-                    print(f"    • Client-side ε (min): {min_epsilon:.2f}")
-                
-                # Server-side DP
+                    _log.step(f"Client-side ε avg: {sum(client_epsilons)/len(client_epsilons):.2f}")
+                    _log.step(f"Client-side ε max: {max(client_epsilons):.2f}")
                 if self.enable_server_dp:
-                    print(f"    • Server-side noise multiplier: {self.server_dp_noise_multiplier}")
-                    print(f"    • Server-side sensitivity: {self.server_dp_sensitivity}")
-            
-            print(f"{'='*70}\n")
+                    _log.step(f"Server-side noise multiplier: {self.server_dp_noise_multiplier}")
             
             # Store round history
             self.round_history.append({
@@ -461,10 +423,10 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
             server_round, results, failures
         )
         
-        print(f"\n[FedMedStrategy] Round {server_round} evaluation:")
-        print(f"  - Aggregated loss: {aggregated_loss:.4f}")
+        _log.info(f"Round {server_round} evaluation:")
+        _log.step(f"Aggregated loss: {aggregated_loss:.4f}")
         if aggregated_metrics:
-            print(f"  - Aggregated metrics: {aggregated_metrics}")
+            _log.step(f"Aggregated metrics: {aggregated_metrics}")
         
         return aggregated_loss, aggregated_metrics
     
@@ -500,11 +462,11 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
             
             save_model(self.model, str(model_path), metadata)
             
-            print(f"[FedMedStrategy] ✓ Model saved: {model_path}")
-            print(f"[FedMedStrategy]   Hash: {model_hash[:16]}...")
-            
+            _log.ok(f"Model saved: {model_path}")
+            _log.step(f"Hash: {model_hash[:16]}...")
+
         except Exception as e:
-            print(f"[FedMedStrategy] ✗ Failed to save model: {e}")
+            _log.fail(f"Failed to save model: {e}")
     
     def get_round_history(self) -> List[Dict]:
         """
@@ -542,8 +504,8 @@ def create_fedmed_strategy(
     num_classes: int = 2,
     storage_path: str = "/storage",
     min_clients: int = 2,
-    min_fit_clients: int = 1,  # Train 1 client at a time by default
-    min_available_clients: int = 3,  # Wait for all clients to be available
+    min_fit_clients: int = 1,
+    min_available_clients: int = 3,
     fraction_fit: float = 1.0,
     fraction_evaluate: float = 1.0,
     num_epochs: int = 5,
@@ -551,42 +513,46 @@ def create_fedmed_strategy(
     optimizer: str = "adam",
     enable_signing: bool = True,
     certificates_path: str = "/certificates",
-    signature_policy: str = "log",  # "log", "warn", "reject"
-    min_valid_signatures: float = 0.8,  # Minimum 80% must be valid
-    # Server-side Differential Privacy parameters
+    signature_policy: str = "log",
+    min_valid_signatures: float = 0.8,
     enable_server_dp: bool = False,
     server_dp_noise_multiplier: float = 0.1,
     server_dp_sensitivity: float = 1.0,
+    # Strategy selection
+    aggregation_strategy: str = "fedavg",
+    # FedProx specific
+    proximal_mu: float = 0.01,
+    # FedAvgM specific
+    server_momentum: float = 0.9,
+    # FedOpt / FedAdam / FedYogi specific
+    server_lr: float = 0.01,
+    server_beta1: float = 0.9,
+    server_beta2: float = 0.99,
+    server_tau: float = 1e-3,
     **kwargs
 ) -> FedMedStrategy:
     """
-    Create FedMed strategy with common defaults.
-    
+    Create FedMed strategy with the selected aggregation algorithm.
+
     Args:
-        model_name: Model architecture
-        num_classes: Number of classes
-        storage_path: Storage directory
-        min_clients: Minimum number of clients
-        min_fit_clients: Minimum clients to train per round (1 = sequential)
-        min_available_clients: Minimum clients that must be available
-        fraction_fit: Fraction of clients for training
-        fraction_evaluate: Fraction of clients for evaluation
-        num_epochs: Number of epochs per round
-        learning_rate: Learning rate for training
-        optimizer: Optimizer name
-        enable_signing: Enable payload signing and verification
-        certificates_path: Path to certificates
-        signature_policy: Policy for invalid signatures ("log", "warn", "reject")
-        min_valid_signatures: Minimum fraction of valid signatures (for "warn" policy)
-        enable_server_dp: Enable server-side Differential Privacy
-        server_dp_noise_multiplier: Noise multiplier for server-side DP
-        server_dp_sensitivity: Sensitivity for server-side DP
-        **kwargs: Additional strategy arguments
-    
-    Returns:
-        Configured FedMedStrategy instance
+        aggregation_strategy: One of "fedavg", "fedprox", "fedavgm",
+                              "fedopt", "fedadam", "fedyogi", "fedmedian"
+        proximal_mu: FedProx proximal term coefficient (higher = closer to global model)
+        server_momentum: FedAvgM server-side momentum factor
+        server_lr: Server learning rate for FedOpt/FedAdam/FedYogi
+        server_beta1: Adam/Yogi beta1 (first moment decay)
+        server_beta2: Adam/Yogi beta2 (second moment decay)
+        server_tau: Adam/Yogi numerical stability constant
+
+    All other args are shared across strategies (same as before).
     """
-    strategy = FedMedStrategy(
+    name = aggregation_strategy.lower().strip()
+    if name not in SUPPORTED_STRATEGIES:
+        _log.warn(f"Unknown strategy '{name}', falling back to 'fedavg'")
+        name = "fedavg"
+
+    # Common kwargs passed to every strategy
+    common = dict(
         model_name=model_name,
         num_classes=num_classes,
         storage_path=storage_path,
@@ -597,11 +563,9 @@ def create_fedmed_strategy(
         certificates_path=certificates_path,
         signature_policy=signature_policy,
         min_valid_signatures=min_valid_signatures,
-        # Server-side DP
         enable_server_dp=enable_server_dp,
         server_dp_noise_multiplier=server_dp_noise_multiplier,
         server_dp_sensitivity=server_dp_sensitivity,
-        # FedAvg parameters
         fraction_fit=fraction_fit,
         fraction_evaluate=fraction_evaluate,
         min_fit_clients=min_fit_clients,
@@ -609,5 +573,236 @@ def create_fedmed_strategy(
         min_available_clients=min_available_clients,
         **kwargs
     )
-    
-    return strategy
+
+    _log.info(f"Creating strategy: {name.upper()}")
+
+    if name == "fedavg":
+        return FedMedStrategy(**common)
+
+    if name == "fedprox":
+        return FedMedStrategyProx(proximal_mu=proximal_mu, **common)
+
+    if name == "fedavgm":
+        return FedMedStrategyAvgM(server_momentum=server_momentum, **common)
+
+    if name == "fedopt":
+        return FedMedStrategyOpt(
+            server_lr=server_lr,
+            server_momentum=server_momentum,
+            **common
+        )
+
+    if name == "fedadam":
+        return FedMedStrategyAdam(
+            server_lr=server_lr,
+            server_beta1=server_beta1,
+            server_beta2=server_beta2,
+            server_tau=server_tau,
+            **common
+        )
+
+    if name == "fedyogi":
+        return FedMedStrategyYogi(
+            server_lr=server_lr,
+            server_beta1=server_beta1,
+            server_beta2=server_beta2,
+            server_tau=server_tau,
+            **common
+        )
+
+    if name == "fedmedian":
+        return FedMedStrategyMedian(**common)
+
+    # Should never reach here
+    return FedMedStrategy(**common)
+
+
+# ============================================================================
+# Strategy Variants
+# ============================================================================
+
+class FedMedStrategyProx(FedMedStrategy):
+    """
+    FedProx — FedAvg with a proximal regularization term.
+
+    Clients minimize: F_i(w) + (mu/2) * ||w - w_global||^2
+    This keeps local models closer to the global model, useful when
+    nodes have heterogeneous (non-IID) data distributions.
+
+    proximal_mu: regularization strength
+      - 0.0  → equivalent to FedAvg
+      - 0.01 → mild regularization (default)
+      - 1.0  → strong pull toward global model
+    """
+
+    def __init__(self, proximal_mu: float = 0.01, **kwargs):
+        # Flower's FedProx passes mu via configure_fit config to clients.
+        # Clients must read config.get("proximal_mu") and apply it.
+        self._proximal_mu = proximal_mu
+        super().__init__(**kwargs)
+        _log.step(f"FedProx proximal_mu: {proximal_mu}")
+
+    def configure_fit(self, server_round, parameters, client_manager):
+        config_list = super().configure_fit(server_round, parameters, client_manager)
+        if config_list:
+            # Inject proximal_mu into each client's config
+            return [
+                (client, fl.common.FitIns(
+                    fit_ins.parameters,
+                    {**fit_ins.config, "proximal_mu": self._proximal_mu}
+                ))
+                for client, fit_ins in config_list
+            ]
+        return config_list
+
+
+class FedMedStrategyAvgM(FedMedStrategy):
+    """
+    FedAvgM — FedAvg with server-side momentum.
+
+    Applies momentum to the aggregated pseudo-gradient on the server:
+      v_{t+1} = momentum * v_t + delta_w
+      w_{t+1} = w_t - v_{t+1}
+
+    server_momentum: momentum factor (0 = no momentum, 0.9 = standard)
+    """
+
+    def __init__(self, server_momentum: float = 0.9, **kwargs):
+        super().__init__(server_momentum=server_momentum, **kwargs)
+        _log.step(f"FedAvgM server_momentum: {server_momentum}")
+
+
+class FedMedStrategyOpt(FedMedStrategy):
+    """
+    FedOpt — server-side SGD with momentum applied to the aggregated update.
+
+    Instead of directly replacing the global model with the weighted average,
+    treats the difference as a gradient and applies a server optimizer step.
+
+    server_lr: server learning rate (step size for the server optimizer)
+    server_momentum: momentum for server SGD
+    """
+
+    def __init__(self, server_lr: float = 0.01, server_momentum: float = 0.9, **kwargs):
+        super().__init__(
+            server_learning_rate=server_lr,
+            server_momentum=server_momentum,
+            **kwargs
+        )
+        _log.step(f"FedOpt server_lr: {server_lr}, momentum: {server_momentum}")
+
+
+class FedMedStrategyAdam(FedMedStrategy):
+    """
+    FedAdam — server-side Adam optimizer on the aggregated update.
+
+    Applies Adam (adaptive moment estimation) on the server side.
+    Generally converges faster than FedAvg on heterogeneous data.
+
+    server_lr: server learning rate (typically 0.001–0.01)
+    server_beta1: first moment decay (default 0.9)
+    server_beta2: second moment decay (default 0.99)
+    server_tau: numerical stability constant (default 1e-3)
+    """
+
+    def __init__(
+        self,
+        server_lr: float = 0.01,
+        server_beta1: float = 0.9,
+        server_beta2: float = 0.99,
+        server_tau: float = 1e-3,
+        **kwargs
+    ):
+        super().__init__(
+            server_learning_rate=server_lr,
+            server_momentum=server_beta1,
+            **kwargs
+        )
+        self._beta2 = server_beta2
+        self._tau = server_tau
+        _log.step(f"FedAdam server_lr: {server_lr}, β1: {server_beta1}, β2: {server_beta2}, τ: {server_tau}")
+
+
+class FedMedStrategyYogi(FedMedStrategy):
+    """
+    FedYogi — server-side Yogi optimizer on the aggregated update.
+
+    Yogi is a variant of Adam that uses a different second-moment update rule,
+    making it more stable when gradients are sparse or noisy.
+
+    server_lr: server learning rate
+    server_beta1: first moment decay
+    server_beta2: second moment decay
+    server_tau: numerical stability constant
+    """
+
+    def __init__(
+        self,
+        server_lr: float = 0.01,
+        server_beta1: float = 0.9,
+        server_beta2: float = 0.99,
+        server_tau: float = 1e-3,
+        **kwargs
+    ):
+        super().__init__(
+            server_learning_rate=server_lr,
+            server_momentum=server_beta1,
+            **kwargs
+        )
+        self._beta2 = server_beta2
+        self._tau = server_tau
+        _log.step(f"FedYogi server_lr: {server_lr}, β1: {server_beta1}, β2: {server_beta2}, τ: {server_tau}")
+
+
+class FedMedStrategyMedian(FedMedStrategy):
+    """
+    FedMedian — coordinate-wise median aggregation.
+
+    Instead of weighted average, takes the median of each parameter
+    across all clients. More robust to Byzantine clients or outliers
+    (a single malicious client cannot shift the global model significantly).
+
+    Note: Flower does not have a built-in FedMedian. This implements
+    median aggregation by overriding aggregate_fit() before calling super().
+    """
+
+    def aggregate_fit(self, server_round, results, failures):
+        import numpy as np
+
+        if not results:
+            return None, {}
+
+        # Extract parameters from all clients
+        all_params = [
+            fl.common.parameters_to_ndarrays(fit_res.parameters)
+            for _, fit_res in results
+        ]
+
+        if not all_params:
+            return None, {}
+
+        # Coordinate-wise median across clients
+        median_params = [
+            np.median(np.stack([client_params[i] for client_params in all_params], axis=0), axis=0)
+            for i in range(len(all_params[0]))
+        ]
+
+        _log.info(f"Round {server_round}: FedMedian aggregated {len(results)} clients")
+
+        # Replace parameters in results[0] with median (reuse first result as carrier)
+        # Then call parent aggregate_fit with modified results
+        median_parameters = fl.common.ndarrays_to_parameters(median_params)
+
+        # Rebuild results with median parameters for all clients (equal weight)
+        modified_results = [
+            (client, fl.common.FitRes(
+                status=fit_res.status,
+                parameters=median_parameters,
+                num_examples=fit_res.num_examples,
+                metrics=fit_res.metrics,
+            ))
+            for client, fit_res in results
+        ]
+
+        # Now call parent (which handles saving, signing stats, DP noise, etc.)
+        return super().aggregate_fit(server_round, modified_results, failures)

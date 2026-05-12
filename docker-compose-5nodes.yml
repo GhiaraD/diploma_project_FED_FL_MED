@@ -1,0 +1,517 @@
+version: "3.9"
+
+# 5-node variant of docker-compose.yml
+# Ports:
+#   Central:  API 8081, Flower gRPC 8080
+#   Node 1:   API 8001, UI 3001, Redis 63791
+#   Node 2:   API 8002, UI 3002, Redis 63792
+#   Node 3:   API 8003, UI 3003, Redis 63793
+#   Node 4:   API 8004, UI 3004, Redis 63794
+#   Node 5:   API 8005, UI 3005, Redis 63795
+
+services:
+  # ===== Central FL =====
+  central:
+    build:
+      context: .
+      dockerfile: ./services/central/Dockerfile
+    environment:
+      CENTRAL_STORAGE: /storage
+      PORT: 8081
+      USE_FLOWER: "true"
+      FLOWER_SERVER_ADDRESS: 0.0.0.0:8080
+      NUM_ROUNDS: 2
+      MIN_CLIENTS: 5
+      MIN_FIT_CLIENTS: 5
+      MIN_AVAILABLE_CLIENTS: 5
+      FRACTION_FIT: 1.0
+      MODEL_NAME: efficientnet_b0
+      NUM_CLASSES: 2
+      NUM_EPOCHS: 2
+      LEARNING_RATE: 0.001
+      OPTIMIZER: adam
+      ENABLE_SSL: "false"
+      CERTIFICATES_PATH: /certificates
+      FLOWER_ENABLE_SSL: "true"
+      SIGNATURE_POLICY: "log"
+      MIN_VALID_SIGNATURES: "0.8"
+      ENABLE_SERVER_DP: "false"
+      SERVER_DP_NOISE_MULTIPLIER: "0.1"
+      SERVER_DP_SENSITIVITY: "1.0"
+    volumes:
+      - ./storage/central:/storage
+      - ./certificates:/certificates:ro
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+    command: python -m app.main
+
+  # ===== Node 1 =====
+  node1-api:
+    build:
+      context: .
+      dockerfile: ./services/node/api/Dockerfile
+    environment:
+      NODE_ID: node1
+      STORAGE_ROOT: /storage
+      CENTRAL_URL: http://central:8081
+      REDIS_URL: redis://node1-redis:6379/0
+      DEVICE: cuda
+      TZ: ${TZ:-UTC}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-fed-med-fl-secret-key-2026-change-in-production}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-1440}
+      REDIS_HOST: node1-redis
+      REDIS_PORT: 6379
+      REDIS_SECURITY_DB: 1
+      RATE_LIMIT_ENABLED: "true"
+      API_KEY_EXPIRE_DAYS: 365
+      AUDIT_LOG_LEVEL: INFO
+      AUDIT_LOG_RETENTION_DAYS: 2555
+      ENABLE_SSL: "false"
+      CERTIFICATES_PATH: /certificates
+    volumes:
+      - ./storage/node1:/storage
+      - ./certificates:/certificates:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    ports:
+      - "8001:8000"
+    depends_on:
+      - central
+      - node1-redis
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  node1-worker:
+    build:
+      context: .
+      dockerfile: ./services/node/worker/Dockerfile
+    environment:
+      NODE_ID: node1
+      STORAGE_ROOT: /storage
+      CENTRAL_URL: http://central:8081
+      FLOWER_SERVER: central:8080
+      REDIS_URL: redis://node1-redis:6379/0
+      DEVICE: cuda
+      TZ: ${TZ:-UTC}
+      ENABLE_SSL: "true"
+      CERTIFICATES_PATH: /certificates
+      ENABLE_DP: "false"
+      DP_TARGET_EPSILON: "10.0"
+      DP_TARGET_DELTA: "1e-5"
+      DP_NOISE_MULTIPLIER: "0.5"
+      DP_MAX_GRAD_NORM: "1.0"
+      DP_MAX_EPOCHS: "10"
+    volumes:
+      - ./storage/node1:/storage
+      - ./certificates:/certificates:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    depends_on:
+      - node1-redis
+      - node1-api
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  node1-redis:
+    image: redis:7
+    ports:
+      - "63791:6379"
+
+  node1-ui:
+    build:
+      context: ./services/node/ui
+      dockerfile: Dockerfile
+    environment:
+      NEXT_PUBLIC_API_BASE: http://localhost:8001
+    ports:
+      - "3001:3000"
+    depends_on:
+      - node1-api
+
+  # ===== Node 2 =====
+  node2-api:
+    build:
+      context: .
+      dockerfile: ./services/node/api/Dockerfile
+    environment:
+      NODE_ID: node2
+      STORAGE_ROOT: /storage
+      CENTRAL_URL: http://central:8081
+      REDIS_URL: redis://node2-redis:6379/0
+      DEVICE: cuda
+      TZ: ${TZ:-UTC}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-fed-med-fl-secret-key-2026-change-in-production}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-1440}
+      REDIS_HOST: node2-redis
+      REDIS_PORT: 6379
+      REDIS_SECURITY_DB: 1
+      RATE_LIMIT_ENABLED: "true"
+      API_KEY_EXPIRE_DAYS: 365
+      AUDIT_LOG_LEVEL: INFO
+      AUDIT_LOG_RETENTION_DAYS: 2555
+      ENABLE_SSL: "false"
+      CERTIFICATES_PATH: /certificates
+    volumes:
+      - ./storage/node2:/storage
+      - ./certificates:/certificates:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    ports:
+      - "8002:8000"
+    depends_on:
+      - central
+      - node2-redis
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  node2-worker:
+    build:
+      context: .
+      dockerfile: ./services/node/worker/Dockerfile
+    environment:
+      NODE_ID: node2
+      STORAGE_ROOT: /storage
+      CENTRAL_URL: http://central:8081
+      FLOWER_SERVER: central:8080
+      REDIS_URL: redis://node2-redis:6379/0
+      DEVICE: cuda
+      TZ: ${TZ:-UTC}
+      ENABLE_SSL: "true"
+      CERTIFICATES_PATH: /certificates
+      ENABLE_DP: "false"
+      DP_TARGET_EPSILON: "10.0"
+      DP_TARGET_DELTA: "1e-5"
+      DP_NOISE_MULTIPLIER: "0.5"
+      DP_MAX_GRAD_NORM: "1.0"
+      DP_MAX_EPOCHS: "10"
+    volumes:
+      - ./storage/node2:/storage
+      - ./certificates:/certificates:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    depends_on:
+      - node2-redis
+      - node2-api
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  node2-redis:
+    image: redis:7
+    ports:
+      - "63792:6379"
+
+  node2-ui:
+    build:
+      context: ./services/node/ui
+      dockerfile: Dockerfile
+    environment:
+      NEXT_PUBLIC_API_BASE: http://localhost:8002
+    ports:
+      - "3002:3000"
+    depends_on:
+      - node2-api
+
+  # ===== Node 3 =====
+  node3-api:
+    build:
+      context: .
+      dockerfile: ./services/node/api/Dockerfile
+    environment:
+      NODE_ID: node3
+      STORAGE_ROOT: /storage
+      CENTRAL_URL: http://central:8081
+      REDIS_URL: redis://node3-redis:6379/0
+      DEVICE: cuda
+      TZ: ${TZ:-UTC}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-fed-med-fl-secret-key-2026-change-in-production}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-1440}
+      REDIS_HOST: node3-redis
+      REDIS_PORT: 6379
+      REDIS_SECURITY_DB: 1
+      RATE_LIMIT_ENABLED: "true"
+      API_KEY_EXPIRE_DAYS: 365
+      AUDIT_LOG_LEVEL: INFO
+      AUDIT_LOG_RETENTION_DAYS: 2555
+      ENABLE_SSL: "false"
+      CERTIFICATES_PATH: /certificates
+    volumes:
+      - ./storage/node3:/storage
+      - ./certificates:/certificates:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    ports:
+      - "8003:8000"
+    depends_on:
+      - central
+      - node3-redis
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  node3-worker:
+    build:
+      context: .
+      dockerfile: ./services/node/worker/Dockerfile
+    environment:
+      NODE_ID: node3
+      STORAGE_ROOT: /storage
+      CENTRAL_URL: http://central:8081
+      FLOWER_SERVER: central:8080
+      REDIS_URL: redis://node3-redis:6379/0
+      DEVICE: cuda
+      TZ: ${TZ:-UTC}
+      ENABLE_SSL: "true"
+      CERTIFICATES_PATH: /certificates
+      ENABLE_DP: "false"
+      DP_TARGET_EPSILON: "10.0"
+      DP_TARGET_DELTA: "1e-5"
+      DP_NOISE_MULTIPLIER: "0.5"
+      DP_MAX_GRAD_NORM: "1.0"
+      DP_MAX_EPOCHS: "10"
+    volumes:
+      - ./storage/node3:/storage
+      - ./certificates:/certificates:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    depends_on:
+      - node3-redis
+      - node3-api
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  node3-redis:
+    image: redis:7
+    ports:
+      - "63793:6379"
+
+  node3-ui:
+    build:
+      context: ./services/node/ui
+      dockerfile: Dockerfile
+    environment:
+      NEXT_PUBLIC_API_BASE: http://localhost:8003
+    ports:
+      - "3003:3000"
+    depends_on:
+      - node3-api
+
+  # ===== Node 4 =====
+  node4-api:
+    build:
+      context: .
+      dockerfile: ./services/node/api/Dockerfile
+    environment:
+      NODE_ID: node4
+      STORAGE_ROOT: /storage
+      CENTRAL_URL: http://central:8081
+      REDIS_URL: redis://node4-redis:6379/0
+      DEVICE: cuda
+      TZ: ${TZ:-UTC}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-fed-med-fl-secret-key-2026-change-in-production}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-1440}
+      REDIS_HOST: node4-redis
+      REDIS_PORT: 6379
+      REDIS_SECURITY_DB: 1
+      RATE_LIMIT_ENABLED: "true"
+      API_KEY_EXPIRE_DAYS: 365
+      AUDIT_LOG_LEVEL: INFO
+      AUDIT_LOG_RETENTION_DAYS: 2555
+      ENABLE_SSL: "false"
+      CERTIFICATES_PATH: /certificates
+    volumes:
+      - ./storage/node4:/storage
+      - ./certificates:/certificates:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    ports:
+      - "8004:8000"
+    depends_on:
+      - central
+      - node4-redis
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  node4-worker:
+    build:
+      context: .
+      dockerfile: ./services/node/worker/Dockerfile
+    environment:
+      NODE_ID: node4
+      STORAGE_ROOT: /storage
+      CENTRAL_URL: http://central:8081
+      FLOWER_SERVER: central:8080
+      REDIS_URL: redis://node4-redis:6379/0
+      DEVICE: cuda
+      TZ: ${TZ:-UTC}
+      ENABLE_SSL: "true"
+      CERTIFICATES_PATH: /certificates
+      ENABLE_DP: "false"
+      DP_TARGET_EPSILON: "10.0"
+      DP_TARGET_DELTA: "1e-5"
+      DP_NOISE_MULTIPLIER: "0.5"
+      DP_MAX_GRAD_NORM: "1.0"
+      DP_MAX_EPOCHS: "10"
+    volumes:
+      - ./storage/node4:/storage
+      - ./certificates:/certificates:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    depends_on:
+      - node4-redis
+      - node4-api
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  node4-redis:
+    image: redis:7
+    ports:
+      - "63794:6379"
+
+  node4-ui:
+    build:
+      context: ./services/node/ui
+      dockerfile: Dockerfile
+    environment:
+      NEXT_PUBLIC_API_BASE: http://localhost:8004
+    ports:
+      - "3004:3000"
+    depends_on:
+      - node4-api
+
+  # ===== Node 5 =====
+  node5-api:
+    build:
+      context: .
+      dockerfile: ./services/node/api/Dockerfile
+    environment:
+      NODE_ID: node5
+      STORAGE_ROOT: /storage
+      CENTRAL_URL: http://central:8081
+      REDIS_URL: redis://node5-redis:6379/0
+      DEVICE: cuda
+      TZ: ${TZ:-UTC}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-fed-med-fl-secret-key-2026-change-in-production}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-1440}
+      REDIS_HOST: node5-redis
+      REDIS_PORT: 6379
+      REDIS_SECURITY_DB: 1
+      RATE_LIMIT_ENABLED: "true"
+      API_KEY_EXPIRE_DAYS: 365
+      AUDIT_LOG_LEVEL: INFO
+      AUDIT_LOG_RETENTION_DAYS: 2555
+      ENABLE_SSL: "false"
+      CERTIFICATES_PATH: /certificates
+    volumes:
+      - ./storage/node5:/storage
+      - ./certificates:/certificates:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    ports:
+      - "8005:8000"
+    depends_on:
+      - central
+      - node5-redis
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  node5-worker:
+    build:
+      context: .
+      dockerfile: ./services/node/worker/Dockerfile
+    environment:
+      NODE_ID: node5
+      STORAGE_ROOT: /storage
+      CENTRAL_URL: http://central:8081
+      FLOWER_SERVER: central:8080
+      REDIS_URL: redis://node5-redis:6379/0
+      DEVICE: cuda
+      TZ: ${TZ:-UTC}
+      ENABLE_SSL: "true"
+      CERTIFICATES_PATH: /certificates
+      ENABLE_DP: "false"
+      DP_TARGET_EPSILON: "10.0"
+      DP_TARGET_DELTA: "1e-5"
+      DP_NOISE_MULTIPLIER: "0.5"
+      DP_MAX_GRAD_NORM: "1.0"
+      DP_MAX_EPOCHS: "10"
+    volumes:
+      - ./storage/node5:/storage
+      - ./certificates:/certificates:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    depends_on:
+      - node5-redis
+      - node5-api
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  node5-redis:
+    image: redis:7
+    ports:
+      - "63795:6379"
+
+  node5-ui:
+    build:
+      context: ./services/node/ui
+      dockerfile: Dockerfile
+    environment:
+      NEXT_PUBLIC_API_BASE: http://localhost:8005
+    ports:
+      - "3005:3000"
+    depends_on:
+      - node5-api

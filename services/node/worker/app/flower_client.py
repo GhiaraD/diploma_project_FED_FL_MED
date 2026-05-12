@@ -21,8 +21,8 @@ try:
     OPACUS_AVAILABLE = True
 except ImportError:
     OPACUS_AVAILABLE = False
+    # Can't use FedLogger here (not yet imported), plain print is acceptable at import time
     print("⚠️  Opacus not available. Differential Privacy will be disabled.")
-
 # Add node_core to path
 sys.path.insert(0, '/app/shared/python/node_core')
 
@@ -36,6 +36,7 @@ from node_core import (
     compute_metrics,
     create_payload_signer,
     sign_model_parameters,
+    get_logger,
 )
 
 # Global variable to store last training metrics
@@ -109,7 +110,9 @@ class FedMedClient(fl.client.NumPyClient):
         self.privacy_engine = None
         
         if enable_dp and not OPACUS_AVAILABLE:
-            print(f"[{node_id}] ⚠️  DP requested but Opacus not available. DP disabled.")
+            get_logger(node_id).warn("DP requested but Opacus not available. DP disabled.")
+
+        self._log = get_logger(node_id)
         
         # Initialize model
         self.model = get_model(model_name, num_classes=num_classes, pretrained=False)
@@ -129,32 +132,32 @@ class FedMedClient(fl.client.NumPyClient):
                     is_central=False
                 )
                 if self.signer.is_ready():
-                    print(f"[{node_id}] 🔐 Payload signing enabled")
+                    self._log.ok("Payload signing enabled")
                 else:
-                    print(f"[{node_id}] ⚠️  Payload signing disabled (certificates not ready)")
+                    self._log.warn("Payload signing disabled (certificates not ready)")
                     self.enable_signing = False
             except Exception as e:
-                print(f"[{node_id}] ⚠️  Failed to initialize signer: {e}")
+                self._log.warn(f"Failed to initialize signer: {e}")
                 self.enable_signing = False
-        
+
         # Load dataset
         self.train_loader, self.val_loader = self._load_data()
-        
-        print(f"[{node_id}] Flower client initialized")
-        print(f"[{node_id}] Model: {model_name}")
-        print(f"[{node_id}] Dataset: {dataset_path}")
-        print(f"[{node_id}] Device: {device}")
-        print(f"[{node_id}] Signing: {'Enabled' if self.enable_signing else 'Disabled'}")
-        print(f"[{node_id}] Differential Privacy: {'Enabled' if self.enable_dp else 'Disabled'}")
+
+        self._log.info("Flower client initialized")
+        self._log.step(f"Model: {model_name}")
+        self._log.step(f"Dataset: {dataset_path}")
+        self._log.step(f"Device: {device}")
+        self._log.step(f"Signing: {'Enabled' if self.enable_signing else 'Disabled'}")
+        self._log.step(f"Differential Privacy: {'Enabled' if self.enable_dp else 'Disabled'}")
         if self.enable_dp:
-            print(f"[{node_id}]   Target ε: {self.dp_target_epsilon}")
-            print(f"[{node_id}]   Target δ: {self.dp_target_delta}")
-            print(f"[{node_id}]   Noise multiplier: {self.dp_noise_multiplier}")
-            print(f"[{node_id}]   Max grad norm: {self.dp_max_grad_norm}")
+            self._log.step(f"Target ε: {self.dp_target_epsilon}")
+            self._log.step(f"Target δ: {self.dp_target_delta}")
+            self._log.step(f"Noise multiplier: {self.dp_noise_multiplier}")
+            self._log.step(f"Max grad norm: {self.dp_max_grad_norm}")
     
     def _load_data(self):
         """Load and prepare datasets."""
-        print(f"[{self.node_id}] Loading dataset from {self.dataset_path}...")
+        self._log.info(f"Loading dataset from {self.dataset_path}...")
         
         # Load dataset
         train_dataset = load_dataset(self.dataset_path, split='train')
@@ -175,9 +178,9 @@ class FedMedClient(fl.client.NumPyClient):
             num_workers=0  # Must be 0 for Celery workers
         )
         
-        print(f"[{self.node_id}] ✓ Dataset loaded:")
-        print(f"  - Training samples: {len(train_dataset)}")
-        print(f"  - Validation samples: {len(val_dataset)}")
+        self._log.ok("Dataset loaded:")
+        self._log.step(f"Training samples: {len(train_dataset)}")
+        self._log.step(f"Validation samples: {len(val_dataset)}")
         
         return train_loader, val_loader
     
@@ -186,27 +189,25 @@ class FedMedClient(fl.client.NumPyClient):
         if not self.enable_dp or not OPACUS_AVAILABLE:
             return
         
-        print(f"[{self.node_id}] 🔒 Validating model for DP compatibility...")
-        
+        self._log.info("Validating model for DP compatibility...")
+
         try:
             errors = ModuleValidator.validate(self.model, strict=False)
             if errors:
-                print(f"[{self.node_id}] ⚠️  Model has {len(errors)} compatibility issue(s):")
-                for i, error in enumerate(errors[:3], 1):  # Show first 3
-                    print(f"  {i}. {error}")
+                self._log.warn(f"Model has {len(errors)} compatibility issue(s):")
+                for i, error in enumerate(errors[:3], 1):
+                    self._log.step(f"{i}. {error}")
                 if len(errors) > 3:
-                    print(f"  ... and {len(errors) - 3} more")
-                
-                # Try to fix automatically
-                print(f"[{self.node_id}] 🔧 Attempting automatic fix...")
+                    self._log.step(f"... and {len(errors) - 3} more")
+                self._log.info("Attempting automatic fix...")
                 self.model = ModuleValidator.fix(self.model)
                 self.model.to(self.device)
-                print(f"[{self.node_id}] ✓ Model fixed for DP compatibility")
+                self._log.ok("Model fixed for DP compatibility")
             else:
-                print(f"[{self.node_id}] ✓ Model is DP-compatible")
+                self._log.ok("Model is DP-compatible")
         except Exception as e:
-            print(f"[{self.node_id}] ⚠️  DP validation failed: {e}")
-            print(f"[{self.node_id}] ⚠️  Disabling DP for this client")
+            self._log.warn(f"DP validation failed: {e}")
+            self._log.warn("Disabling DP for this client")
             self.enable_dp = False
     
     def get_parameters(self, config: Dict) -> List[np.ndarray]:
@@ -253,27 +254,23 @@ class FedMedClient(fl.client.NumPyClient):
         
         # Get current round from config
         current_round = config.get("server_round", "?")
-        
-        print(f"\n{'='*70}")
-        print(f"[{self.node_id}] 🔄 FEDERATED LEARNING ROUND {current_round}")
-        print(f"{'='*70}")
-        
-        # Set global parameters
+
+        self._log.section(f"FEDERATED LEARNING ROUND {current_round}")
+
         self.set_parameters(parameters)
-        print(f"[{self.node_id}] ✓ Received global model parameters from server")
-        
-        # Get hyperparameters from config
+        self._log.ok("Received global model parameters from server")
+
         num_epochs = config.get("num_epochs", 5)
         learning_rate = config.get("learning_rate", 0.001)
         optimizer_name = config.get("optimizer", "adam")
-        
-        print(f"[{self.node_id}] 📋 Training Configuration:")
-        print(f"  • Epochs: {num_epochs}")
-        print(f"  • Learning rate: {learning_rate}")
-        print(f"  • Optimizer: {optimizer_name}")
-        print(f"  • Batch size: {self.batch_size}")
-        print(f"  • Training samples: {len(self.train_loader.dataset)}")
-        print(f"  • Validation samples: {len(self.val_loader.dataset)}")
+
+        self._log.info("Training Configuration:")
+        self._log.step(f"Epochs: {num_epochs}")
+        self._log.step(f"Learning rate: {learning_rate}")
+        self._log.step(f"Optimizer: {optimizer_name}")
+        self._log.step(f"Batch size: {self.batch_size}")
+        self._log.step(f"Training samples: {len(self.train_loader.dataset)}")
+        self._log.step(f"Validation samples: {len(self.val_loader.dataset)}")
         
         # Setup training
         criterion = torch.nn.CrossEntropyLoss()
@@ -283,18 +280,14 @@ class FedMedClient(fl.client.NumPyClient):
         # Setup Differential Privacy if enabled
         train_loader = self.train_loader
         if self.enable_dp and OPACUS_AVAILABLE:
-            print(f"[{self.node_id}] 🔒 Enabling Differential Privacy (DP-SGD)...")
-            
+            self._log.info("Enabling Differential Privacy (DP-SGD)...")
             try:
-                # Disable inplace operations for PyTorch 2.x compatibility with Opacus
-                # This fixes the "view and is being modified inplace" error
                 for m in self.model.modules():
                     if hasattr(m, "inplace"):
                         m.inplace = False
-                print(f"[{self.node_id}] ✓ Disabled inplace operations for DP compatibility")
-                
-                privacy_engine = PrivacyEngine(secure_mode=False)  # Disable secure_mode for compatibility
-                
+                self._log.ok("Disabled inplace operations for DP compatibility")
+
+                privacy_engine = PrivacyEngine(secure_mode=False)
                 self.model, optimizer, train_loader = privacy_engine.make_private(
                     module=self.model,
                     optimizer=optimizer,
@@ -302,24 +295,22 @@ class FedMedClient(fl.client.NumPyClient):
                     noise_multiplier=self.dp_noise_multiplier,
                     max_grad_norm=self.dp_max_grad_norm,
                 )
-                
                 self.privacy_engine = privacy_engine
-                print(f"[{self.node_id}] ✓ DP-SGD enabled successfully")
-                print(f"[{self.node_id}]   Noise multiplier: {self.dp_noise_multiplier}")
-                print(f"[{self.node_id}]   Max grad norm: {self.dp_max_grad_norm}")
-                print(f"[{self.node_id}]   Secure mode: False (for compatibility)")
+                self._log.ok("DP-SGD enabled successfully")
+                self._log.step(f"Noise multiplier: {self.dp_noise_multiplier}")
+                self._log.step(f"Max grad norm: {self.dp_max_grad_norm}")
+                self._log.step("Secure mode: False (for compatibility)")
             except Exception as e:
-                print(f"[{self.node_id}] ⚠️  Failed to enable DP: {e}")
-                print(f"[{self.node_id}] ⚠️  Continuing without DP")
+                self._log.warn(f"Failed to enable DP: {e}")
+                self._log.warn("Continuing without DP")
                 self.enable_dp = False
                 self.privacy_engine = None
         else:
-            # Enable inplace operations for memory efficiency when DP is disabled
             if not self.enable_dp:
                 for m in self.model.modules():
                     if hasattr(m, "inplace"):
                         m.inplace = True
-                print(f"[{self.node_id}] ✓ Enabled inplace operations for memory efficiency (DP disabled)")
+                self._log.ok("Enabled inplace operations for memory efficiency (DP disabled)")
         
         # Train with or without DP
         if self.enable_dp and self.privacy_engine:
@@ -371,9 +362,9 @@ class FedMedClient(fl.client.NumPyClient):
                 metrics["dp_epsilon"] = float(final_epsilon)
                 metrics["dp_delta"] = float(self.dp_target_delta)
                 metrics["dp_enabled"] = True
-                print(f"[{self.node_id}] 🔒 Privacy spent: ε = {final_epsilon:.2f} (δ = {self.dp_target_delta})")
+                self._log.info(f"Privacy spent: ε = {final_epsilon:.2f} (δ = {self.dp_target_delta})")
             except Exception as e:
-                print(f"[{self.node_id}] ⚠️  Failed to compute epsilon: {e}")
+                self._log.warn(f"Failed to compute epsilon: {e}")
                 metrics["dp_enabled"] = False
         else:
             metrics["dp_enabled"] = False
@@ -394,9 +385,9 @@ class FedMedClient(fl.client.NumPyClient):
                     }
                 )
                 if signature_package.get('signed'):
-                    print(f"[{self.node_id}] 🔐 Parameters signed successfully")
+                    self._log.ok("Parameters signed successfully")
             except Exception as e:
-                print(f"[{self.node_id}] ⚠️  Failed to sign parameters: {e}")
+                self._log.warn(f"Failed to sign parameters: {e}")
                 signature_package = {'signed': False, 'error': str(e)}
         
         # Add signature package to metrics for transmission
@@ -408,17 +399,13 @@ class FedMedClient(fl.client.NumPyClient):
         
         # Store metrics globally for retrieval after training
         _last_training_metrics = metrics
-        
-        print(f"\n{'='*70}")
-        print(f"[{self.node_id}] ✅ ROUND {current_round} COMPLETE")
-        print(f"{'='*70}")
-        print(f"  📊 Results:")
-        print(f"    • Best accuracy: {metrics['accuracy']:.2%}")
-        print(f"    • Final train loss: {metrics['train_loss']:.4f}")
-        print(f"    • Final val loss: {metrics['val_loss']:.4f}")
-        print(f"  📤 Sending updated parameters to server...")
-        print(f"{'='*70}\n")
-        
+
+        self._log.section(f"ROUND {current_round} COMPLETE")
+        self._log.step(f"Best accuracy: {metrics['accuracy']:.2%}")
+        self._log.step(f"Final train loss: {metrics['train_loss']:.4f}")
+        self._log.step(f"Final val loss: {metrics['val_loss']:.4f}")
+        self._log.info("Sending updated parameters to server...")
+
         return updated_parameters, num_samples, metrics
     
     def _train_with_dp(
@@ -505,7 +492,7 @@ class FedMedClient(fl.client.NumPyClient):
             # Get current epsilon
             epsilon = self.privacy_engine.get_epsilon(delta=self.dp_target_delta)
             
-            print(f"[{self.node_id}] Epoch {epoch+1}/{num_epochs} - "
+            self._log.info(f"Epoch {epoch+1}/{num_epochs} - "
                   f"Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}, "
                   f"Val Acc: {val_acc:.2%}, ε: {epsilon:.2f}")
             
@@ -532,7 +519,7 @@ class FedMedClient(fl.client.NumPyClient):
             - Number of evaluation samples
             - Metrics dict
         """
-        print(f"[{self.node_id}] Evaluating model...")
+        self._log.info(f"Evaluating model...")
         
         # Set parameters
         self.set_parameters(parameters)
@@ -574,10 +561,10 @@ class FedMedClient(fl.client.NumPyClient):
             'auc': float(metrics_full.get('auc', 0)),
         }
         
-        print(f"[{self.node_id}] Evaluation results:")
-        print(f"  - Loss: {avg_loss:.4f}")
-        print(f"  - Accuracy: {metrics.get('accuracy', 0):.4f}")
-        print(f"  - F1: {metrics.get('f1', 0):.4f}")
+        self._log.info("Evaluation results:")
+        self._log.step(f"Loss: {avg_loss:.4f}")
+        self._log.step(f"Accuracy: {metrics.get('accuracy', 0):.4f}")
+        self._log.step(f"F1: {metrics.get('f1', 0):.4f}")
         
         return avg_loss, num_samples, metrics
 
@@ -632,19 +619,17 @@ def start_flower_client(
         dp_max_grad_norm: Maximum gradient norm for clipping
         dp_max_epochs: Maximum epochs for privacy accounting
     """
-    print("=" * 70)
-    print(f"FED-MED-FL FLOWER CLIENT - {node_id}")
-    print("=" * 70)
-    print(f"Server: {server_address}")
-    print(f"Model: {model_name}")
-    print(f"Dataset: {dataset_path}")
-    print(f"Device: {device}")
-    print(f"SSL/TLS: {'Enabled (mTLS)' if enable_ssl else 'Disabled'}")
-    print(f"Differential Privacy: {'Enabled' if enable_dp else 'Disabled'}")
+    log = get_logger(node_id)
+    log.section(f"FED-MED-FL FLOWER CLIENT - {node_id}")
+    log.step(f"Server: {server_address}")
+    log.step(f"Model: {model_name}")
+    log.step(f"Dataset: {dataset_path}")
+    log.step(f"Device: {device}")
+    log.step(f"SSL/TLS: {'Enabled (mTLS)' if enable_ssl else 'Disabled'}")
+    log.step(f"Differential Privacy: {'Enabled' if enable_dp else 'Disabled'}")
     if enable_dp:
-        print(f"  Target ε: {dp_target_epsilon}")
-        print(f"  Target δ: {dp_target_delta}")
-    print("=" * 70)
+        log.step(f"Target ε: {dp_target_epsilon}")
+        log.step(f"Target δ: {dp_target_delta}")
     
     # Create client
     client = FedMedClient(
@@ -677,26 +662,19 @@ def start_flower_client(
         ca_cert = cert_path / "ca-cert.pem"
         
         if client_cert.exists() and client_key.exists() and ca_cert.exists():
-            print(f"\n[{node_id}] 🔒 Configuring mTLS...")
-            print(f"[{node_id}]   Client cert: {client_cert}")
-            print(f"[{node_id}]   Client key: {client_key}")
-            print(f"[{node_id}]   CA cert: {ca_cert}")
-            
-            # Read CA certificate for server verification
+            log.info("Configuring mTLS...")
+            log.step(f"Client cert: {client_cert}")
+            log.step(f"Client key: {client_key}")
+            log.step(f"CA cert: {ca_cert}")
             root_certificates = ca_cert.read_bytes()
-            
-            # For mTLS, we need to provide client certificate
-            # Flower expects root_certificates parameter for CA
-            # Client cert/key are loaded via gRPC channel credentials
-            print(f"[{node_id}] ✓ mTLS configured successfully")
+            log.ok("mTLS configured successfully")
         else:
-            print(f"\n[{node_id}] ⚠️  SSL certificates not found at {cert_path}")
-            print(f"[{node_id}] ⚠️  Falling back to insecure connection")
+            log.warn(f"SSL certificates not found at {cert_path}")
+            log.warn("Falling back to insecure connection")
             enable_ssl = False
-    
-    # Connect to server
-    print(f"\n[{node_id}] Connecting to Flower server at {server_address}...\n")
-    
+
+    log.info(f"Connecting to Flower server at {server_address}...")
+
     try:
         if enable_ssl and root_certificates:
             fl.client.start_numpy_client(
@@ -709,10 +687,9 @@ def start_flower_client(
                 server_address=server_address,
                 client=client,
             )
-        
-        print(f"\n[{node_id}] ✓ Disconnected from server")
-        
-        # Save the trained model after FL completes
+
+        log.ok("Disconnected from server")
+
         if session_id:
             from node_core import save_model
             model_id = f"{model_name}_{session_id}_flower"
@@ -720,7 +697,7 @@ def start_flower_client(
             model_dir.mkdir(parents=True, exist_ok=True)
             model_path = model_dir / f"{model_id}.pt"
 
-            print(f"[{node_id}] 💾 Saving trained model to {model_path}...")
+            log.info(f"Saving trained model to {model_path}...")
 
             global _last_training_metrics
             metrics = _last_training_metrics
@@ -734,14 +711,14 @@ def start_flower_client(
             }
 
             save_model(client.model, str(model_path), metadata)
-            print(f"[{node_id}] ✅ Model saved successfully")
+            log.ok("Model saved successfully")
         else:
-            print(f"[{node_id}] ⚠️  session_id not provided — trained model will NOT be saved to disk")
-        
+            log.warn("session_id not provided — trained model will NOT be saved to disk")
+
     except KeyboardInterrupt:
-        print(f"\n[{node_id}] Interrupted by user")
+        log.info("Interrupted by user")
     except Exception as e:
-        print(f"\n[{node_id}] ✗ Error: {e}")
+        log.fail(f"Error: {e}")
         raise
 
 

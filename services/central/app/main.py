@@ -190,6 +190,14 @@ def start_fl_server(
     optimizer: str = "adam",
     min_fit_clients: int = 2,
     min_available_clients: int = 2,
+    # Aggregation strategy
+    aggregation_strategy: str = "fedavg",
+    proximal_mu: float = 0.01,
+    server_momentum: float = 0.9,
+    server_lr: float = 0.01,
+    server_beta1: float = 0.9,
+    server_beta2: float = 0.99,
+    server_tau: float = 1e-3,
 ):
     """
     Start Flower Server with the given training configuration.
@@ -205,6 +213,13 @@ def start_fl_server(
         optimizer: Optimizer name (sent to clients)
         min_fit_clients: Minimum clients required to start a round
         min_available_clients: Minimum clients that must be available
+        aggregation_strategy: One of fedavg, fedprox, fedavgm, fedopt, fedadam, fedyogi, fedmedian
+        proximal_mu: FedProx proximal term (ignored for other strategies)
+        server_momentum: FedAvgM/FedOpt server momentum
+        server_lr: FedOpt/FedAdam/FedYogi server learning rate
+        server_beta1: FedAdam/FedYogi beta1
+        server_beta2: FedAdam/FedYogi beta2
+        server_tau: FedAdam/FedYogi tau
     """
     if check_flower_server_running():
         return {
@@ -224,6 +239,13 @@ def start_fl_server(
         "--optimizer", optimizer,
         "--min-fit-clients", str(min_fit_clients),
         "--min-available-clients", str(min_available_clients),
+        "--aggregation-strategy", aggregation_strategy,
+        "--proximal-mu", str(proximal_mu),
+        "--server-momentum", str(server_momentum),
+        "--server-lr", str(server_lr),
+        "--server-beta1", str(server_beta1),
+        "--server-beta2", str(server_beta2),
+        "--server-tau", str(server_tau),
         "--enable-ssl", os.getenv("FLOWER_ENABLE_SSL", "true"),
         "--certificates-path", os.getenv("CERTIFICATES_PATH", "/certificates"),
         "--signature-policy", os.getenv("SIGNATURE_POLICY", "log"),
@@ -248,6 +270,7 @@ def start_fl_server(
             "optimizer": optimizer,
             "min_fit_clients": min_fit_clients,
             "min_available_clients": min_available_clients,
+            "aggregation_strategy": aggregation_strategy,
         },
     }
 

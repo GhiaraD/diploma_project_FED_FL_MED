@@ -31,6 +31,10 @@ from .database import SessionLocal, Job, Model, InferenceResult
 import torch
 import uuid
 
+from node_core import get_logger
+
+_log = get_logger(settings.NODE_ID if hasattr(settings, 'NODE_ID') else "worker")
+
 # Initialize Celery
 celery_app = Celery(
     "node-worker",
@@ -102,7 +106,7 @@ def train_local_model_task(
         dataset_path = dataset.path
         
         # Load datasets
-        print(f"[{settings.NODE_ID}] Loading dataset from {dataset_path}...")
+        _log.info(f"Loading dataset from {dataset_path}...")
         train_dataset = load_dataset(dataset_path, split='train')
         
         # Create validation split if needed
@@ -119,7 +123,7 @@ def train_local_model_task(
         )
         
         # Initialize model
-        print(f"[{settings.NODE_ID}] Initializing {model_name}...")
+        _log.info(f"Initializing {model_name}...")
         model = get_model(model_name, num_classes=2, pretrained=True)
         model = model.to(settings.DEVICE)
         
@@ -130,7 +134,7 @@ def train_local_model_task(
         early_stopping = EarlyStopping(patience=5, mode='max')
         
         # Train
-        print(f"[{settings.NODE_ID}] Starting training...")
+        _log.info("Starting training...")
         history = train_model(
             model=model,
             train_loader=train_loader,
@@ -145,7 +149,7 @@ def train_local_model_task(
         )
         
         # Compute comprehensive metrics on validation set
-        print(f"[{settings.NODE_ID}] Computing final metrics...")
+        _log.info("Computing final metrics...")
         model.eval()
         y_true = []
         y_pred = []
@@ -192,15 +196,15 @@ def train_local_model_task(
             'val_loss': history['val_loss'][-1]
         }
         
-        print(f"[{settings.NODE_ID}] Final Metrics:")
-        print(f"  • Accuracy: {db_metrics['accuracy']:.4f}")
-        print(f"  • F1 Score: {db_metrics['f1']:.4f}")
-        print(f"  • Precision: {db_metrics['precision']:.4f}")
-        print(f"  • Recall: {db_metrics['recall']:.4f}")
+        _log.info("Final Metrics:")
+        _log.step(f"Accuracy: {db_metrics['accuracy']:.4f}")
+        _log.step(f"F1 Score: {db_metrics['f1']:.4f}")
+        _log.step(f"Precision: {db_metrics['precision']:.4f}")
+        _log.step(f"Recall: {db_metrics['recall']:.4f}")
         if db_metrics['auc']:
-            print(f"  • AUC: {db_metrics['auc']:.4f}")
-        print(f"  • Sensitivity: {db_metrics['sensitivity']:.4f}")
-        print(f"  • Specificity: {db_metrics['specificity']:.4f}")
+            _log.step(f"AUC: {db_metrics['auc']:.4f}")
+        _log.step(f"Sensitivity: {db_metrics['sensitivity']:.4f}")
+        _log.step(f"Specificity: {db_metrics['specificity']:.4f}")
         
         # Save to database
         db = SessionLocal()
@@ -224,12 +228,12 @@ def train_local_model_task(
         
         update_job_status(job_id, "completed", result=result)
         
-        print(f"[{settings.NODE_ID}] ✓ Training completed: {model_id}")
-        
+        _log.ok(f"Training completed: {model_id}")
+
         return result
-        
+
     except Exception as e:
-        print(f"[{settings.NODE_ID}] ✗ Training failed: {e}")
+        _log.fail(f"Training failed: {e}")
         update_job_status(job_id, "failed", error=str(e))
         raise
 
@@ -251,106 +255,89 @@ def run_inference_task(
         generate_gradcam: Whether to generate Grad-CAM overlays
     """
     try:
-        print(f"[{job_id}] 🚀 Starting inference job")
-        print(f"[{job_id}] 📊 Processing {len(image_paths)} image(s)")
-        print(f"[{job_id}] 🎨 Grad-CAM visualization: {'enabled' if generate_gradcam else 'disabled'}")
-        
+        job_log = get_logger(job_id)
+        job_log.info(f"Starting inference job")
+        job_log.step(f"Processing {len(image_paths)} image(s)")
+        job_log.step(f"Grad-CAM: {'enabled' if generate_gradcam else 'disabled'}")
+
         update_job_status(job_id, "running")
-        
-        # Get model
+
         db = SessionLocal()
-        
-        print(f"[{job_id}] 🔍 Looking for model...")
+
+        job_log.info("Looking for model...")
         if model_id:
             model_record = db.query(Model).filter(Model.model_id == model_id).first()
-            print(f"[{job_id}] 📦 Using specified model: {model_id}")
+            job_log.step(f"Using specified model: {model_id}")
         else:
-            # Use deployed model
             model_record = db.query(Model).filter(Model.type == "deployed").first()
-            print(f"[{job_id}] 📦 Using deployed model")
+            job_log.step("Using deployed model")
         
         if not model_record:
             raise ValueError("No model found")
         
-        model_name = model_record.model_name
-        model_path = model_record.file_path
-        
-        # Load model
-        print(f"[{job_id}] 🧠 Loading model: {model_name}")
-        print(f"[{job_id}] 📂 Model path: {model_path}")
-        print(f"[{job_id}] 💻 Device: {settings.DEVICE}")
+        job_log.info(f"Loading model: {model_name}")
+        job_log.step(f"Model path: {model_path}")
+        job_log.step(f"Device: {settings.DEVICE}")
         model, metadata = load_model(model_name, model_path, device=settings.DEVICE)
-        print(f"[{job_id}] ✓ Model loaded successfully")
-        
-        # Prepare images
-        print(f"[{job_id}] 🖼️  Preparing images for inference...")
+        job_log.ok("Model loaded successfully")
+
+        job_log.info("Preparing images for inference...")
         from PIL import Image
         from node_core import get_val_transforms
-        
+
         transform = get_val_transforms()
         images_tensors = []
-        
+
         for idx, img_path in enumerate(image_paths, 1):
-            print(f"[{job_id}]   └─ Loading image {idx}/{len(image_paths)}: {os.path.basename(img_path)}")
+            job_log.step(f"Loading image {idx}/{len(image_paths)}: {os.path.basename(img_path)}")
             img = Image.open(img_path).convert('RGB')
             img_tensor = transform(img)
             images_tensors.append(img_tensor)
-        
-        print(f"[{job_id}] ✓ All images prepared")
-        
-        # Run inference
-        print(f"[{job_id}] 🔮 Running inference...")
+
+        job_log.ok("All images prepared")
+
+        job_log.info("Running inference...")
         batch_tensor = torch.stack(images_tensors)
-        
+
         pred_classes, confidences, probs = predict_batch(
             model, batch_tensor, device=settings.DEVICE
         )
-        print(f"[{job_id}] ✓ Inference completed")
+        job_log.ok("Inference completed")
         
         # Generate Grad-CAM if requested
         gradcam_paths = []
         if generate_gradcam:
-            print(f"[{job_id}] 🎨 Generating Grad-CAM visualizations...")
+            job_log.info("Generating Grad-CAM visualizations...")
             target_layer = get_final_conv_layer(model, model_name)
             gradcam = GradCAM(model, target_layer)
-            
+
             for i, (img_path, img_tensor) in enumerate(zip(image_paths, images_tensors)):
-                print(f"[{job_id}]   └─ Generating Grad-CAM {i+1}/{len(image_paths)}")
-                # Load original image to get dimensions
+                job_log.step(f"Generating Grad-CAM {i+1}/{len(image_paths)}")
                 img = Image.open(img_path).convert('RGB')
                 import numpy as np
                 img_np = np.array(img).astype(np.float32) / 255.0
-                
-                # Generate heatmap and resize to match original image dimensions
                 heatmap, _ = gradcam.generate(img_tensor, device=settings.DEVICE)
-                
-                # Resize heatmap to match original image size (H, W)
                 import cv2
                 heatmap_resized = cv2.resize(heatmap, (img_np.shape[1], img_np.shape[0]))
-                
-                # Save overlay
                 overlay_path = os.path.join(
                     settings.RESULTS_DIR, "inference",
                     f"{job_id}_{i}_gradcam.png"
                 )
                 save_gradcam_overlay(img_np, heatmap_resized, overlay_path)
                 gradcam_paths.append(overlay_path)
-            
-            print(f"[{job_id}] ✓ Grad-CAM visualizations saved")
+
+            job_log.ok("Grad-CAM visualizations saved")
         else:
             gradcam_paths = [None] * len(image_paths)
         
-        # Save results to database
-        print(f"[{job_id}] 💾 Saving results to database...")
+        job_log.info("Saving results to database...")
         results = []
         for i, (img_path, pred_cls, conf, prob) in enumerate(
             zip(image_paths, pred_classes, confidences, probs)
         ):
             result_id = f"{job_id}_{i}"
-            
-            # Log prediction details
             class_name = "PNEUMONIA" if pred_cls == 1 else "NORMAL"
-            print(f"[{job_id}]   └─ Image {i+1}: {class_name} (confidence: {conf:.2%})")
+            job_log.step(f"Image {i+1}: {class_name} (confidence: {conf:.2%})")
             
             result_record = InferenceResult(
                 result_id=result_id,
@@ -373,24 +360,17 @@ def run_inference_task(
         
         db.commit()
         db.close()
-        
-        print(f"[{job_id}] ✓ Results saved to database")
-        
-        result = {
-            'num_images': len(image_paths),
-            'results': results
-        }
-        
+
+        job_log.ok("Results saved to database")
+
+        result = {'num_images': len(image_paths), 'results': results}
         update_job_status(job_id, "completed", result=result)
-        
-        print(f"[{job_id}] ✅ Inference job completed successfully")
-        print(f"[{job_id}] 📈 Summary: {len(image_paths)} image(s) processed")
-        
+
+        job_log.ok(f"Inference job completed — {len(image_paths)} image(s) processed")
         return result
-        
+
     except Exception as e:
-        print(f"[{job_id}] ❌ Inference job failed: {str(e)}")
-        print(f"[{job_id}] 🔍 Error details: {type(e).__name__}")
+        get_logger(job_id).fail(f"Inference job failed: {e}")
         update_job_status(job_id, "failed", error=str(e))
         raise
 
@@ -457,16 +437,16 @@ def federated_training_task(
         n_samples = dataset.num_samples
         dataset_name = dataset.name
         
-        print(f"[{settings.NODE_ID}] 🚀 Starting Flower client for session {job_id}...")
-        print(f"[{settings.NODE_ID}] 📊 Model: {model_name}")
-        print(f"[{settings.NODE_ID}] 📁 Dataset: {dataset_name} ({dataset_id})")
-        print(f"[{settings.NODE_ID}] 📍 Path: {dataset_path}")
-        print(f"[{settings.NODE_ID}] 🔢 Samples: {n_samples}")
+        _log.info(f"Starting Flower client for session {job_id}...")
+        _log.step(f"Model: {model_name}")
+        _log.step(f"Dataset: {dataset_name} ({dataset_id})")
+        _log.step(f"Path: {dataset_path}")
+        _log.step(f"Samples: {n_samples}")
         
         sys.path.insert(0, '/app/worker')
         from flower_client import start_flower_client, get_last_training_metrics
         
-        print(f"[{settings.NODE_ID}] 🔗 Connecting to Flower server...")
+        _log.info("Connecting to Flower server...")
         
         start_flower_client(
             server_address=settings.FLOWER_SERVER,
@@ -487,7 +467,7 @@ def federated_training_task(
             dp_max_epochs=int(os.getenv("DP_MAX_EPOCHS", "10")),
         )
         
-        print(f"[{settings.NODE_ID}] ✅ Flower client completed successfully")
+        _log.ok("Flower client completed successfully")
         
         metrics = get_last_training_metrics()
         
@@ -497,7 +477,7 @@ def federated_training_task(
         
         model_saved = False
         if model_path.exists():
-            print(f"[{settings.NODE_ID}] ✅ Model found at {model_path}")
+            _log.ok(f"Model found at {model_path}")
             model_saved = True
             
             from .database import Model
@@ -513,9 +493,9 @@ def federated_training_task(
             )
             db.add(db_model)
             db.commit()
-            print(f"[{settings.NODE_ID}] ✅ Model registered in database")
+            _log.ok("Model registered in database")
         else:
-            print(f"[{settings.NODE_ID}] ⚠️ Warning: Model file not found at {model_path}")
+            _log.warn(f"Model file not found at {model_path}")
         
         result = {
             'job_id': job_id,
@@ -530,9 +510,9 @@ def federated_training_task(
             'note': 'Trained with Flower framework'
         }
         
-        print(f"[{settings.NODE_ID}] 📈 Final metrics: {metrics}")
-        print(f"[{settings.NODE_ID}] ✓ Training completed for session {job_id}")
-        print(f"[{settings.NODE_ID}] 📝 Logs saved to {log_file}")
+        _log.info(f"Final metrics: {metrics}")
+        _log.ok(f"Training completed for session {job_id}")
+        _log.step(f"Logs saved to {log_file}")
         
         db.close()
         update_job_status(job_id, "completed", result=result)
@@ -540,8 +520,7 @@ def federated_training_task(
         return result
         
     except Exception as e:
-        error_msg = f"[{settings.NODE_ID}] ✗ Flower training failed: {e}"
-        print(error_msg)
+        _log.fail(f"Flower training failed: {e}")
         import traceback
         traceback.print_exc()
         update_job_status(job_id, "failed", error=str(e))

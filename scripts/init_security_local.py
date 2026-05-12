@@ -22,7 +22,7 @@ def create_default_users():
     """Create default users for each node."""
     
     # Connect to each node's database
-    nodes = ['node1', 'node2', 'node3']
+    nodes = ['node1', 'node2', 'node3', 'node4', 'node5']
     
     for node in nodes:
         db_path = f"storage/{node}/node.db"
@@ -206,6 +206,12 @@ def print_summary():
     print("│ admin@node3.fed-med-fl.com          │ admin        │ node3  │")
     print("│ doctor@node3.fed-med-fl.com         │ doctor       │ node3  │")
     print("│ researcher@node3.fed-med-fl.com     │ researcher   │ node3  │")
+    print("│ admin@node4.fed-med-fl.com          │ admin        │ node4  │")
+    print("│ doctor@node4.fed-med-fl.com         │ doctor       │ node4  │")
+    print("│ researcher@node4.fed-med-fl.com     │ researcher   │ node4  │")
+    print("│ admin@node5.fed-med-fl.com          │ admin        │ node5  │")
+    print("│ doctor@node5.fed-med-fl.com         │ doctor       │ node5  │")
+    print("│ researcher@node5.fed-med-fl.com     │ researcher   │ node5  │")
     print("│ viewer@fed-med-fl.com               │ viewer       │ node1  │")
     print("└─────────────────────────────────────┴──────────────┴────────┘")
     
@@ -226,8 +232,10 @@ def print_summary():
     
     print("\n📁 API Keys saved to:")
     print("  • storage/node1_api_key.txt")
-    print("  • storage/node2_api_key.txt") 
+    print("  • storage/node2_api_key.txt")
     print("  • storage/node3_api_key.txt")
+    print("  • storage/node4_api_key.txt")
+    print("  • storage/node5_api_key.txt")
     
     print("\n🚀 Next Steps:")
     print("  1. Test login: POST /api/auth/login")

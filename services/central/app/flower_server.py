@@ -11,7 +11,9 @@ from pathlib import Path
 # Add node_core to path
 sys.path.insert(0, '/app/shared/python/node_core')
 
-from node_core import create_fedmed_strategy
+from node_core import create_fedmed_strategy, get_logger, SUPPORTED_STRATEGIES
+
+_log = get_logger("FlowerServer")
 
 
 def start_flower_server(
@@ -32,6 +34,14 @@ def start_flower_server(
     certificates_path: str = "/certificates",
     signature_policy: str = "log",
     min_valid_signatures: float = 0.8,
+    # Aggregation strategy
+    aggregation_strategy: str = "fedavg",
+    proximal_mu: float = 0.01,
+    server_momentum: float = 0.9,
+    server_lr: float = 0.01,
+    server_beta1: float = 0.9,
+    server_beta2: float = 0.99,
+    server_tau: float = 1e-3,
     # Server-side Differential Privacy parameters
     enable_server_dp: bool = False,
     server_dp_noise_multiplier: float = 0.1,
@@ -62,23 +72,21 @@ def start_flower_server(
         server_dp_noise_multiplier: Noise multiplier for server-side DP
         server_dp_sensitivity: Sensitivity for server-side DP
     """
-    print("=" * 70)
-    print("FED-MED-FL FLOWER SERVER")
-    print("=" * 70)
-    print(f"Server address: {server_address}")
-    print(f"Number of rounds: {num_rounds}")
-    print(f"Minimum clients: {min_clients}")
-    print(f"Min fit clients per round: {min_fit_clients}")
-    print(f"Min available clients: {min_available_clients}")
-    print(f"Model: {model_name}")
-    print(f"Storage: {storage_path}")
-    print(f"Training: {num_epochs} epochs, lr={learning_rate}, optimizer={optimizer}")
-    print(f"SSL/TLS: {'Enabled (mTLS)' if enable_ssl else 'Disabled'}")
-    print(f"Server-side DP: {'Enabled' if enable_server_dp else 'Disabled'}")
+    _log.section("FED-MED-FL FLOWER SERVER")
+    _log.step(f"Server address: {server_address}")
+    _log.step(f"Number of rounds: {num_rounds}")
+    _log.step(f"Minimum clients: {min_clients}")
+    _log.step(f"Min fit clients per round: {min_fit_clients}")
+    _log.step(f"Min available clients: {min_available_clients}")
+    _log.step(f"Model: {model_name}")
+    _log.step(f"Storage: {storage_path}")
+    _log.step(f"Training: {num_epochs} epochs, lr={learning_rate}, optimizer={optimizer}")
+    _log.step(f"Aggregation strategy: {aggregation_strategy.upper()}")
+    _log.step(f"SSL/TLS: {'Enabled (mTLS)' if enable_ssl else 'Disabled'}")
+    _log.step(f"Server-side DP: {'Enabled' if enable_server_dp else 'Disabled'}")
     if enable_server_dp:
-        print(f"  Noise multiplier: {server_dp_noise_multiplier}")
-        print(f"  Sensitivity: {server_dp_sensitivity}")
-    print("=" * 70)
+        _log.step(f"Noise multiplier: {server_dp_noise_multiplier}")
+        _log.step(f"Sensitivity: {server_dp_sensitivity}")
     
     # Create strategy
     strategy = create_fedmed_strategy(
@@ -93,11 +101,17 @@ def start_flower_server(
         num_epochs=num_epochs,
         learning_rate=learning_rate,
         optimizer=optimizer,
-        enable_signing=enable_ssl,  # Use same flag as SSL
+        enable_signing=enable_ssl,
         certificates_path=certificates_path,
         signature_policy=signature_policy,
         min_valid_signatures=min_valid_signatures,
-        # Server-side DP
+        aggregation_strategy=aggregation_strategy,
+        proximal_mu=proximal_mu,
+        server_momentum=server_momentum,
+        server_lr=server_lr,
+        server_beta1=server_beta1,
+        server_beta2=server_beta2,
+        server_tau=server_tau,
         enable_server_dp=enable_server_dp,
         server_dp_noise_multiplier=server_dp_noise_multiplier,
         server_dp_sensitivity=server_dp_sensitivity,
@@ -117,31 +131,24 @@ def start_flower_server(
         ca_cert = cert_path / "ca-cert.pem"
         
         if server_cert.exists() and server_key.exists() and ca_cert.exists():
-            print(f"\n[Server] 🔒 Configuring mTLS...")
-            print(f"[Server]   Server cert: {server_cert}")
-            print(f"[Server]   Server key: {server_key}")
-            print(f"[Server]   CA cert: {ca_cert}")
-            
-            # Flower expects tuple of (ca_cert_bytes, server_cert_bytes, server_key_bytes)
-            # Read certificate contents as bytes
+            _log.info("Configuring mTLS...")
+            _log.step(f"Server cert: {server_cert}")
+            _log.step(f"Server key: {server_key}")
+            _log.step(f"CA cert: {ca_cert}")
+
             ca_cert_bytes = ca_cert.read_bytes()
             server_cert_bytes = server_cert.read_bytes()
             server_key_bytes = server_key.read_bytes()
-            
-            ssl_config = (
-                ca_cert_bytes,
-                server_cert_bytes,
-                server_key_bytes,
-            )
-            print(f"[Server] ✓ mTLS configured successfully")
+
+            ssl_config = (ca_cert_bytes, server_cert_bytes, server_key_bytes)
+            _log.ok("mTLS configured successfully")
         else:
-            print(f"\n[Server] ⚠️  SSL certificates not found at {cert_path}")
-            print(f"[Server] ⚠️  Falling back to insecure connection")
+            _log.warn(f"SSL certificates not found at {cert_path}")
+            _log.warn("Falling back to insecure connection")
             enable_ssl = False
-    
-    # Start server
-    print(f"\n[Server] Starting Flower server...")
-    print(f"[Server] Waiting for {min_clients} clients to connect...\n")
+
+    _log.info("Starting Flower server...")
+    _log.info(f"Waiting for {min_clients} clients to connect...")
     
     try:
         if enable_ssl and ssl_config:
@@ -158,20 +165,20 @@ def start_flower_server(
                 strategy=strategy,
             )
         
-        print("\n[Server] ✓ FL training complete!")
+        _log.ok("FL training complete!")
 
         if hasattr(strategy, 'get_round_history'):
-            print(f"[Server] Total rounds: {len(strategy.get_round_history())}")
+            _log.step(f"Total rounds: {len(strategy.get_round_history())}")
 
         if hasattr(strategy, 'get_current_model_path'):
             final_model = strategy.get_current_model_path()
             if final_model:
-                print(f"[Server] Final model: {final_model}")
-        
+                _log.step(f"Final model: {final_model}")
+
     except KeyboardInterrupt:
-        print("\n[Server] Interrupted by user")
+        _log.info("Interrupted by user")
     except Exception as e:
-        print(f"\n[Server] ✗ Error: {e}")
+        _log.fail(f"Error: {e}")
         raise
 
 
@@ -201,6 +208,15 @@ def main():
     parser.add_argument("--enable-server-dp", type=str, default=None, help="Enable server-side DP (true/false)")
     parser.add_argument("--server-dp-noise-multiplier", type=float, default=None, help="Server-side DP noise multiplier")
     parser.add_argument("--server-dp-sensitivity", type=float, default=None, help="Server-side DP sensitivity")
+    # Aggregation strategy
+    parser.add_argument("--aggregation-strategy", type=str, default=None,
+                        help=f"Aggregation strategy: {', '.join(SUPPORTED_STRATEGIES)}")
+    parser.add_argument("--proximal-mu", type=float, default=None, help="FedProx proximal term (default 0.01)")
+    parser.add_argument("--server-momentum", type=float, default=None, help="FedAvgM/FedOpt server momentum (default 0.9)")
+    parser.add_argument("--server-lr", type=float, default=None, help="FedOpt/FedAdam/FedYogi server learning rate (default 0.01)")
+    parser.add_argument("--server-beta1", type=float, default=None, help="FedAdam/FedYogi beta1 (default 0.9)")
+    parser.add_argument("--server-beta2", type=float, default=None, help="FedAdam/FedYogi beta2 (default 0.99)")
+    parser.add_argument("--server-tau", type=float, default=None, help="FedAdam/FedYogi tau (default 1e-3)")
     
     args = parser.parse_args()
     
@@ -229,7 +245,16 @@ def main():
     enable_server_dp = enable_server_dp_str.lower() == "true"
     server_dp_noise_multiplier = args.server_dp_noise_multiplier if args.server_dp_noise_multiplier is not None else float(os.getenv("SERVER_DP_NOISE_MULTIPLIER", "0.1"))
     server_dp_sensitivity = args.server_dp_sensitivity if args.server_dp_sensitivity is not None else float(os.getenv("SERVER_DP_SENSITIVITY", "1.0"))
-    
+
+    # Aggregation strategy configuration
+    aggregation_strategy = args.aggregation_strategy if args.aggregation_strategy is not None else os.getenv("AGGREGATION_STRATEGY", "fedavg")
+    proximal_mu = args.proximal_mu if args.proximal_mu is not None else float(os.getenv("PROXIMAL_MU", "0.01"))
+    server_momentum = args.server_momentum if args.server_momentum is not None else float(os.getenv("SERVER_MOMENTUM", "0.9"))
+    server_lr = args.server_lr if args.server_lr is not None else float(os.getenv("SERVER_LR", "0.01"))
+    server_beta1 = args.server_beta1 if args.server_beta1 is not None else float(os.getenv("SERVER_BETA1", "0.9"))
+    server_beta2 = args.server_beta2 if args.server_beta2 is not None else float(os.getenv("SERVER_BETA2", "0.99"))
+    server_tau = args.server_tau if args.server_tau is not None else float(os.getenv("SERVER_TAU", "1e-3"))
+
     # Start server
     start_flower_server(
         server_address=server_address,
@@ -249,7 +274,13 @@ def main():
         certificates_path=certificates_path,
         signature_policy=signature_policy,
         min_valid_signatures=min_valid_signatures,
-        # Server-side DP
+        aggregation_strategy=aggregation_strategy,
+        proximal_mu=proximal_mu,
+        server_momentum=server_momentum,
+        server_lr=server_lr,
+        server_beta1=server_beta1,
+        server_beta2=server_beta2,
+        server_tau=server_tau,
         enable_server_dp=enable_server_dp,
         server_dp_noise_multiplier=server_dp_noise_multiplier,
         server_dp_sensitivity=server_dp_sensitivity,

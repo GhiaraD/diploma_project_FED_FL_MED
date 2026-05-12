@@ -81,7 +81,20 @@ except ImportError:
     get_uvicorn_config = None
 
 # Federated Learning - Flower Integration
-from .flower_strategy import FedMedStrategy, create_fedmed_strategy
+from .flower_strategy import (
+    FedMedStrategy,
+    FedMedStrategyProx,
+    FedMedStrategyAvgM,
+    FedMedStrategyOpt,
+    FedMedStrategyAdam,
+    FedMedStrategyYogi,
+    FedMedStrategyMedian,
+    create_fedmed_strategy,
+    SUPPORTED_STRATEGIES,
+)
+
+# Logging
+from .logger import FedLogger, get_logger
 
 __all__ = [
     # ML Models
@@ -144,5 +157,16 @@ __all__ = [
     
     # Federated Learning - Flower
     'FedMedStrategy',
+    'FedMedStrategyProx',
+    'FedMedStrategyAvgM',
+    'FedMedStrategyOpt',
+    'FedMedStrategyAdam',
+    'FedMedStrategyYogi',
+    'FedMedStrategyMedian',
     'create_fedmed_strategy',
+    'SUPPORTED_STRATEGIES',
+
+    # Logging
+    'FedLogger',
+    'get_logger',
 ]
