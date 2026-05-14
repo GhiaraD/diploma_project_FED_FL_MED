@@ -10,9 +10,12 @@ Supported aggregation strategies:
 - fedyogi   : FedYogi — server-side Yogi optimizer
 - fedmedian : FedMedian — coordinate-wise median (robust to outliers)
 """
+import time
+import csv
 import torch
 import torch.nn as nn
 import flwr as fl
+import numpy as np
 from typing import Dict, List, Tuple, Optional, Union
 from pathlib import Path
 import os
@@ -21,6 +24,7 @@ from .ml_models import get_model, save_model
 from .utils_hash import compute_model_hash
 from .crypto_utils import create_payload_signer, verify_model_parameters, sign_model_parameters
 from .logger import get_logger
+from .experiment_logger import ExperimentLogger, RoundMetrics, NodeRoundMetrics
 
 _log = get_logger("FedMedStrategy")
 
@@ -56,6 +60,15 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
         enable_server_dp: bool = False,
         server_dp_noise_multiplier: float = 0.1,
         server_dp_sensitivity: float = 1.0,
+        # Experiment logging parameters (NOU)
+        run_id: str = None,
+        experiments_dir: str = "experiments",
+        test_global_csv: str = None,
+        aggregation_method: str = "fedavg",
+        num_rounds: int = None,
+        # Strategy-specific params consumed here so they don't leak to FedAvg
+        server_momentum: float = 0.9,
+        server_learning_rate: float = 0.01,
         **kwargs
     ):
         """
@@ -76,6 +89,11 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
             enable_server_dp: Enable server-side Differential Privacy
             server_dp_noise_multiplier: Noise multiplier for server-side DP
             server_dp_sensitivity: Sensitivity for server-side DP
+            run_id: Identificator unic al experimentului (ex. "fl_fedavg_effb0_run01")
+            experiments_dir: Directorul rădăcină pentru experimente
+            test_global_csv: Calea către test_global.csv pentru evaluare per rundă
+            aggregation_method: Numele strategiei de agregare (pentru logging)
+            num_rounds: Numărul total de runde (pentru _finalize_best_model)
             **kwargs: Additional arguments for FedAvg
         """
         super().__init__(**kwargs)
@@ -90,11 +108,19 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
         self.enable_signing = enable_signing
         self.signature_policy = signature_policy
         self.min_valid_signatures = min_valid_signatures
+        self.server_momentum = server_momentum
+        self.server_learning_rate = server_learning_rate
         
         # Server-side Differential Privacy configuration
         self.enable_server_dp = enable_server_dp
         self.server_dp_noise_multiplier = server_dp_noise_multiplier
         self.server_dp_sensitivity = server_dp_sensitivity
+
+        # Experiment logging configuration (NOU)
+        self.aggregation_method = aggregation_method
+        self.test_global_csv = test_global_csv
+        self.num_rounds = num_rounds
+        self._prev_parameters: Optional[List[np.ndarray]] = None  # pentru update_norm
         
         # Create storage directories
         self.models_dir = self.storage_path / "models"
@@ -130,10 +156,34 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
             'unsigned_parameters': 0
         }
 
+        # Inițializare ExperimentLogger (NOU)
+        self.exp_logger: Optional[ExperimentLogger] = None
+        if run_id:
+            run_dir = str(Path(experiments_dir) / run_id)
+            self.exp_logger = ExperimentLogger(run_dir)
+            # Scrie run_config.json
+            self.exp_logger.write_run_config({
+                "run_id": run_id,
+                "experiment_type": "federated",
+                "aggregation_method": aggregation_method,
+                "model_arch": model_name,
+                "num_rounds": num_rounds,
+                "local_epochs": num_epochs,
+                "min_fit_clients": kwargs.get("min_fit_clients", None),
+                "batch_size": None,  # setat per nod
+                "lr": learning_rate,
+                "optimizer": optimizer,
+                "thresholding_policy": "fixed_0.5",
+            })
+            _log.ok(f"ExperimentLogger inițializat: {run_dir}")
+        else:
+            _log.info("run_id nespecificat — logging experiment dezactivat")
+
         _log.info(f"Initialized with {model_name}")
         _log.step(f"Storage: {self.storage_path}")
         _log.step(f"Save models: {save_models}")
         _log.step(f"Training config: {num_epochs} epochs, lr={learning_rate}, optimizer={optimizer}")
+        _log.step(f"Aggregation method: {aggregation_method}")
         _log.step(f"Signing: {'Enabled' if self.enable_signing else 'Disabled'}")
         if self.enable_signing:
             _log.step(f"Signature Policy: {self.signature_policy}")
@@ -142,6 +192,8 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
         if self.enable_server_dp:
             _log.step(f"Noise multiplier: {self.server_dp_noise_multiplier}")
             _log.step(f"Sensitivity: {self.server_dp_sensitivity}")
+        if test_global_csv:
+            _log.step(f"Test global CSV: {test_global_csv}")
     
     def configure_fit(
         self, 
@@ -266,6 +318,7 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
             - Aggregated parameters
             - Aggregated metrics
         """
+        round_start = time.time()
         self.current_round = server_round
 
         _log.section(f"FEDERATED ROUND {server_round} - AGGREGATION")
@@ -354,11 +407,50 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
                 noisy_parameters = self._add_dp_noise(parameters_list)
                 aggregated_parameters = fl.common.ndarrays_to_parameters(noisy_parameters)
             
-            # Save aggregated model
+            parameters_list = fl.common.parameters_to_ndarrays(aggregated_parameters)
+
+            # Save aggregated model (logica existentă + calea nouă pentru ExperimentLogger)
             if self.save_models:
-                parameters_list = fl.common.parameters_to_ndarrays(aggregated_parameters)
                 self._save_global_model(parameters_list, server_round)
-            
+
+            # NOU: Salvare weights în structura experiments/ per rundă
+            if self.exp_logger:
+                try:
+                    self.exp_logger.save_round_weights(parameters_list, self.model, server_round)
+                except Exception as e:
+                    _log.warn(f"Failed to save round weights via ExperimentLogger: {e}")
+
+            # NOU: Evaluare pe test_global
+            test_metrics = self._evaluate_on_test_global(parameters_list)
+
+            # NOU: Calculare update_norm
+            update_norm = self._compute_update_norm(parameters_list)
+            self._prev_parameters = [p.copy() for p in parameters_list]
+
+            # NOU: Logging metrici per rundă
+            if self.exp_logger:
+                try:
+                    round_metrics = RoundMetrics(
+                        round=server_round,
+                        num_clients=len(results),
+                        aggregation_method=self.aggregation_method,
+                        time_round_sec=round(time.time() - round_start, 2),
+                        update_norm=round(update_norm, 6),
+                        test_auc=test_metrics.get("test_auc"),
+                        test_f1=test_metrics.get("test_f1"),
+                        test_sensitivity=test_metrics.get("test_sensitivity"),
+                        test_specificity=test_metrics.get("test_specificity"),
+                        test_pr_auc=test_metrics.get("test_pr_auc"),
+                    )
+                    self.exp_logger.append_round_metrics(round_metrics)
+                except Exception as e:
+                    _log.warn(f"Failed to log round metrics: {e}")
+
+            # NOU: Logging metrici per nod
+            if self.exp_logger:
+                for client, fit_res in results:
+                    self._log_node_metrics(client, fit_res, server_round)
+
             _log.section(f"ROUND {server_round} COMPLETE")
             if aggregated_metrics:
                 _log.info("Aggregated Metrics:")
@@ -368,6 +460,13 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
                         _log.step(f"{key}: {fmt}")
                     else:
                         _log.step(f"{key}: {value}")
+
+            if test_metrics.get("test_auc") is not None:
+                _log.info("Test Global Metrics:")
+                _log.step(f"AUC: {test_metrics['test_auc']:.4f}")
+                _log.step(f"F1: {test_metrics['test_f1']:.4f}")
+                _log.step(f"Sensitivity: {test_metrics['test_sensitivity']:.4f}")
+                _log.step(f"Specificity: {test_metrics['test_specificity']:.4f}")
 
             if self.enable_signing:
                 _log.info("Signature Verification Stats:")
@@ -394,6 +493,10 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
                 'num_clients': len(results),
                 'metrics': aggregated_metrics
             })
+
+            # NOU: Finalizare best model după ultima rundă
+            if self.exp_logger and self.num_rounds and server_round >= self.num_rounds:
+                self._finalize_best_model()
         
         return aggregated_parameters, aggregated_metrics
     
@@ -430,6 +533,227 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
         
         return aggregated_loss, aggregated_metrics
     
+    def _evaluate_on_test_global(self, parameters: List[np.ndarray]) -> dict:
+        """
+        Evaluează modelul agregat pe test_global după fiecare rundă.
+
+        Returns:
+            Dict cu test_auc, test_f1, test_sensitivity, test_specificity, test_pr_auc.
+            Dacă evaluarea eșuează, returnează dict cu valori None.
+        """
+        null_result = {
+            "test_auc": None, "test_f1": None,
+            "test_sensitivity": None, "test_specificity": None, "test_pr_auc": None,
+        }
+
+        if not self.test_global_csv:
+            return null_result
+
+        csv_path = Path(self.test_global_csv)
+        if not csv_path.exists():
+            _log.warn(f"test_global.csv nu există: {csv_path}")
+            return null_result
+
+        try:
+            import csv as csv_module
+            from PIL import Image
+            from sklearn.metrics import roc_auc_score, f1_score, average_precision_score
+            from .data_utils import get_val_transforms
+            from .ml_metrics import compute_metrics
+
+            # Încarcă lista de fișiere
+            samples = []
+            with open(csv_path, "r", encoding="utf-8") as f:
+                reader = csv_module.DictReader(f)
+                for row in reader:
+                    samples.append((row["filepath"], int(row["label"])))
+
+            if not samples:
+                _log.warn("test_global.csv este gol")
+                return null_result
+
+            # Încarcă parametrii în model
+            params_dict = zip(self.model.state_dict().keys(), parameters)
+            state_dict = {k: torch.tensor(v) for k, v in params_dict}
+            self.model.load_state_dict(state_dict)
+            self.model.eval()
+
+            device = next(self.model.parameters()).device
+            transform = get_val_transforms(224)
+
+            y_true_list = []
+            y_score_list = []
+
+            with torch.no_grad():
+                for filepath, label in samples:
+                    try:
+                        # Rezolvă path-uri relative față de rădăcina containerului
+                        p = Path(filepath)
+                        if not p.is_absolute():
+                            p = Path("/") / p
+                        img = Image.open(str(p)).convert("RGB")
+                        img_tensor = transform(img).unsqueeze(0).to(device)
+                        output = self.model(img_tensor)
+                        prob = torch.softmax(output, dim=1)[0, 1].item()
+                        y_true_list.append(label)
+                        y_score_list.append(prob)
+                    except Exception as img_err:
+                        _log.warn(f"Eroare la procesarea imaginii {filepath}: {img_err}")
+                        continue
+
+            if len(y_true_list) < 2:
+                _log.warn("Prea puține imagini valide pentru evaluare")
+                return null_result
+
+            y_pred_list = [1 if s >= 0.5 else 0 for s in y_score_list]
+            metrics = compute_metrics(y_true_list, y_pred_list, y_score_list)
+            pr_auc = average_precision_score(y_true_list, y_score_list)
+
+            return {
+                "test_auc": round(float(metrics.get("auc", 0) or 0), 6),
+                "test_f1": round(float(metrics.get("f1", 0) or 0), 6),
+                "test_sensitivity": round(float(metrics.get("sensitivity", 0) or 0), 6),
+                "test_specificity": round(float(metrics.get("specificity", 0) or 0), 6),
+                "test_pr_auc": round(float(pr_auc), 6),
+            }
+
+        except Exception as e:
+            _log.warn(f"Evaluare test_global eșuată: {e}")
+            return null_result
+
+    def _compute_update_norm(self, new_parameters: List[np.ndarray]) -> float:
+        """
+        Calculează ||W_new - W_old||_2 față de parametrii din runda anterioară.
+        La prima rundă returnează 0.0.
+        """
+        if self._prev_parameters is None:
+            return 0.0
+        try:
+            delta = np.concatenate([
+                (n - p).flatten()
+                for n, p in zip(new_parameters, self._prev_parameters)
+            ])
+            return float(np.linalg.norm(delta))
+        except Exception:
+            return 0.0
+
+    def _log_node_metrics(
+        self,
+        client,
+        fit_res: fl.common.FitRes,
+        server_round: int,
+    ) -> None:
+        """
+        Extrage metricile din fit_res.metrics și le scrie în
+        nodes/node{N}_metrics_by_round.csv prin self.exp_logger.
+        """
+        if not self.exp_logger:
+            return
+
+        m = fit_res.metrics
+        node_id = m.get("node_id", client.cid)
+
+        try:
+            node_metrics = NodeRoundMetrics(
+                round=server_round,
+                node_id=str(node_id),
+                n_train_samples_used=int(fit_res.num_examples),
+                val_auc=float(m.get("val_auc", m.get("auc", 0)) or 0),
+                val_f1=float(m.get("val_f1", m.get("f1_score", 0)) or 0),
+                val_sensitivity=float(m.get("val_sensitivity", m.get("recall", 0)) or 0),
+                val_specificity=float(m.get("val_specificity", 0) or 0),
+                val_pr_auc=float(m.get("val_pr_auc", 0) or 0),
+                local_train_time_sec=float(m.get("local_train_time_sec", 0) or 0),
+                delta_norm=float(m.get("delta_norm", 0) or 0),
+            )
+            self.exp_logger.append_node_metrics(node_metrics)
+        except Exception as e:
+            _log.warn(f"Failed to log node metrics for {node_id}: {e}")
+
+    def _finalize_best_model(self) -> None:
+        """
+        Apelat după ultima rundă.
+        Găsește runda cu test_auc maxim, copiază weights în central/best_model/,
+        salvează predictions_test.csv și confusion_matrix.json.
+        """
+        if not self.exp_logger:
+            return
+
+        try:
+            best_round = self.exp_logger.get_best_round()
+            if best_round is None:
+                _log.warn("Nu s-a putut determina best round (metrics_by_round.csv lipsă sau gol)")
+                return
+
+            _log.info(f"Best round: {best_round} (după test_auc)")
+
+            # Copiază weights
+            self.exp_logger.copy_best_model_from_round(
+                round_num=best_round,
+                model=self.model,
+                subdir="central/best_model",
+            )
+
+            # Generează predictions_test.csv și confusion_matrix.json
+            if self.test_global_csv and Path(self.test_global_csv).exists():
+                import csv as csv_module
+                from PIL import Image
+                from .data_utils import get_val_transforms
+
+                # Încarcă best model
+                best_weights_path = (
+                    self.exp_logger.run_dir / "central" / "global_models"
+                    / f"round_{best_round:03d}_weights.pt"
+                )
+                if best_weights_path.exists():
+                    checkpoint = torch.load(
+                        best_weights_path, map_location="cpu", weights_only=False
+                    )
+                    state_dict = checkpoint.get("state_dict", checkpoint)
+                    self.model.load_state_dict(state_dict)
+
+                self.model.eval()
+                device = next(self.model.parameters()).device
+                transform = get_val_transforms(224)
+
+                samples = []
+                with open(self.test_global_csv, "r", encoding="utf-8") as f:
+                    reader = csv_module.DictReader(f)
+                    for row in reader:
+                        samples.append((row["filepath"], int(row["label"])))
+
+                filenames, y_true_list, y_score_list = [], [], []
+                with torch.no_grad():
+                    for filepath, label in samples:
+                        try:
+                            p = Path(filepath)
+                            if not p.is_absolute():
+                                p = Path("/") / p
+                            img = Image.open(str(p)).convert("RGB")
+                            img_tensor = transform(img).unsqueeze(0).to(device)
+                            output = self.model(img_tensor)
+                            prob = torch.softmax(output, dim=1)[0, 1].item()
+                            filenames.append(Path(filepath).name)
+                            y_true_list.append(label)
+                            y_score_list.append(prob)
+                        except Exception:
+                            continue
+
+                if filenames:
+                    self.exp_logger.save_predictions(
+                        filenames, y_true_list, y_score_list,
+                        subdir="central/best_model"
+                    )
+                    self.exp_logger.save_confusion_matrix(
+                        y_true_list, y_score_list,
+                        threshold=0.5,
+                        subdir="central/best_model"
+                    )
+                    _log.ok("Best model artifacts salvate în central/best_model/")
+
+        except Exception as e:
+            _log.warn(f"_finalize_best_model eșuat: {e}")
+
     def _save_global_model(self, parameters: List, round_num: int):
         """
         Save global model to disk.
@@ -529,6 +853,11 @@ def create_fedmed_strategy(
     server_beta1: float = 0.9,
     server_beta2: float = 0.99,
     server_tau: float = 1e-3,
+    # Experiment logging (NOU)
+    run_id: str = None,
+    experiments_dir: str = "experiments",
+    test_global_csv: str = None,
+    num_rounds: int = None,
     **kwargs
 ) -> FedMedStrategy:
     """
@@ -571,6 +900,12 @@ def create_fedmed_strategy(
         min_fit_clients=min_fit_clients,
         min_evaluate_clients=min_clients,
         min_available_clients=min_available_clients,
+        # Experiment logging (NOU)
+        run_id=run_id,
+        experiments_dir=experiments_dir,
+        test_global_csv=test_global_csv,
+        aggregation_method=aggregation_strategy,
+        num_rounds=num_rounds,
         **kwargs
     )
 

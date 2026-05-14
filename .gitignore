@@ -28,6 +28,10 @@ fl_datasets/
 artifacts/
 *.pt
 *.pth
+central_dataset/
+experiments/
+results/
+
 
 # Docker
 *.tar

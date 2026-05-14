@@ -9,9 +9,11 @@ import torch
 import torch.nn as nn
 import sys
 import os
+import time
 from typing import Dict, List, Tuple, Optional
 import numpy as np
 from pathlib import Path
+from PIL import Image
 
 # Differential Privacy imports
 try:
@@ -37,10 +39,61 @@ from node_core import (
     create_payload_signer,
     sign_model_parameters,
     get_logger,
+    get_val_transforms,
 )
 
 # Global variable to store last training metrics
 _last_training_metrics = None
+
+
+# ============================================================================
+# CsvDataset — dataset care citește din fișiere CSV cu split-uri fixe
+# ============================================================================
+
+class CsvDataset(torch.utils.data.Dataset):
+    """
+    Dataset care citește lista de fișiere dintr-un CSV cu split-uri fixe.
+
+    Format CSV: filepath,label  (label: 0=NORMAL, 1=PNEUMONIA)
+    """
+
+    def __init__(self, csv_path: str, transform=None):
+        """
+        Args:
+            csv_path: calea către fișierul CSV
+            transform: transformări torchvision de aplicat imaginilor
+        """
+        import csv
+        self.samples: List[Tuple[str, int]] = []
+        self.transform = transform
+
+        csv_file = Path(csv_path)
+        if not csv_file.exists():
+            raise FileNotFoundError(
+                f"Fișierul de split nu există: {csv_path}\n"
+                f"Rulează scripts/prepare_experiment_data.py pentru a genera split-urile."
+            )
+
+        with open(csv_file, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                self.samples.append((row["filepath"], int(row["label"])))
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
+        filepath, label = self.samples[idx]
+        # Dacă path-ul e relativ, îl rezolvăm față de rădăcina sistemului de fișiere
+        # În Docker, central_dataset e montat la /central_dataset,
+        # deci "central_dataset/..." devine "/central_dataset/..."
+        p = Path(filepath)
+        if not p.is_absolute():
+            p = Path("/") / p
+        img = Image.open(str(p)).convert("RGB")
+        if self.transform:
+            img = self.transform(img)
+        return img, label
 
 
 class FedMedClient(fl.client.NumPyClient):
@@ -72,6 +125,8 @@ class FedMedClient(fl.client.NumPyClient):
         dp_noise_multiplier: float = 1.0,
         dp_max_grad_norm: float = 1.0,
         dp_max_epochs: int = 10,
+        # Split-uri fixe (NOU)
+        splits_dir: str = None,
     ):
         """
         Initialize Flower client.
@@ -91,6 +146,9 @@ class FedMedClient(fl.client.NumPyClient):
             dp_noise_multiplier: Noise multiplier for DP
             dp_max_grad_norm: Maximum gradient norm for clipping
             dp_max_epochs: Maximum epochs for privacy accounting
+            splits_dir: Directorul cu split-urile fixe (experiments/splits/).
+                        Dacă e setat, se citesc node{N}_train.csv și node{N}_val.csv.
+                        Dacă e None, se folosește random_split 80/20 (comportament vechi).
         """
         self.node_id = node_id
         self.model_name = model_name
@@ -99,6 +157,7 @@ class FedMedClient(fl.client.NumPyClient):
         self.device = device
         self.batch_size = batch_size
         self.enable_signing = enable_signing
+        self.splits_dir = splits_dir
         
         # Differential Privacy configuration
         self.enable_dp = enable_dp and OPACUS_AVAILABLE
@@ -158,8 +217,43 @@ class FedMedClient(fl.client.NumPyClient):
     def _load_data(self):
         """Load and prepare datasets."""
         self._log.info(f"Loading dataset from {self.dataset_path}...")
-        
-        # Load dataset
+
+        # NOU: Dacă splits_dir e setat, folosim split-urile fixe din CSV
+        if self.splits_dir:
+            train_csv = Path(self.splits_dir) / f"{self.node_id}_train.csv"
+            val_csv = Path(self.splits_dir) / f"{self.node_id}_val.csv"
+
+            if not train_csv.exists():
+                raise FileNotFoundError(
+                    f"Fișierul de split train nu există: {train_csv}\n"
+                    f"Rulează scripts/prepare_experiment_data.py pentru a genera split-urile."
+                )
+            if not val_csv.exists():
+                raise FileNotFoundError(
+                    f"Fișierul de split val nu există: {val_csv}\n"
+                    f"Rulează scripts/prepare_experiment_data.py pentru a genera split-urile."
+                )
+
+            transform_train = get_val_transforms(224)  # fără augmentare pentru reproducibilitate
+            transform_val = get_val_transforms(224)
+
+            train_dataset = CsvDataset(str(train_csv), transform=transform_train)
+            val_dataset = CsvDataset(str(val_csv), transform=transform_val)
+
+            train_loader, val_loader = create_dataloaders(
+                train_dataset,
+                val_dataset,
+                batch_size=self.batch_size,
+                num_workers=0,
+            )
+
+            self._log.ok("Dataset încărcat din split-uri fixe:")
+            self._log.step(f"Train CSV: {train_csv} ({len(train_dataset)} imagini)")
+            self._log.step(f"Val CSV: {val_csv} ({len(val_dataset)} imagini)")
+
+            return train_loader, val_loader
+
+        # Fallback: comportamentul original cu random_split 80/20
         train_dataset = load_dataset(self.dataset_path, split='train')
         
         # Split for validation
@@ -210,6 +304,30 @@ class FedMedClient(fl.client.NumPyClient):
             self._log.warn("Disabling DP for this client")
             self.enable_dp = False
     
+    def _compute_delta_norm(
+        self,
+        local_params: List[np.ndarray],
+        global_params: List[np.ndarray],
+    ) -> float:
+        """
+        Calculează ||W_local - W_global||_2.
+
+        Args:
+            local_params: parametrii modelului după antrenare locală
+            global_params: parametrii modelului global primit de la server
+
+        Returns:
+            Norma L2 a diferenței
+        """
+        try:
+            delta = np.concatenate([
+                (l.flatten() - g.flatten())
+                for l, g in zip(local_params, global_params)
+            ])
+            return float(np.linalg.norm(delta))
+        except Exception:
+            return 0.0
+
     def get_parameters(self, config: Dict) -> List[np.ndarray]:
         """
         Return current model parameters as numpy arrays.
@@ -259,6 +377,10 @@ class FedMedClient(fl.client.NumPyClient):
 
         self.set_parameters(parameters)
         self._log.ok("Received global model parameters from server")
+
+        # NOU: salvăm o copie a parametrilor globali pentru delta_norm
+        fit_start = time.time()
+        global_parameters = [p.copy() for p in parameters]
 
         num_epochs = config.get("num_epochs", 5)
         learning_rate = config.get("learning_rate", 0.001)
@@ -342,19 +464,34 @@ class FedMedClient(fl.client.NumPyClient):
         
         # Run final evaluation to get detailed metrics
         final_loss, _, eval_metrics = self.evaluate(updated_parameters, {})
-        
-        # Metrics - include detailed evaluation metrics
+
+        # NOU: calculare delta_norm
+        delta_norm = self._compute_delta_norm(updated_parameters, global_parameters)
+
+        # NOU: timp total antrenare
+        local_train_time_sec = round(time.time() - fit_start, 2)
+
+        # Metrics - include detailed evaluation metrics + câmpuri noi
         metrics = {
             "accuracy": history['best_val_acc'],
             "train_loss": history['train_loss'][-1],
             "val_loss": history['val_loss'][-1],
-            # Add detailed metrics from evaluation
+            # Metrici existente
             "f1_score": eval_metrics.get('f1', 0),
             "precision": eval_metrics.get('precision', 0),
             "recall": eval_metrics.get('recall', 0),
             "auc": eval_metrics.get('auc', 0),
-        }
-        
+            # NOU: metrici extinse pentru ExperimentLogger
+            "node_id": self.node_id,
+            "val_auc": float(eval_metrics.get('auc', 0) or 0),
+            "val_f1": float(eval_metrics.get('f1', 0) or 0),
+            "val_sensitivity": float(eval_metrics.get('sensitivity', eval_metrics.get('recall', 0)) or 0),
+            "val_specificity": float(eval_metrics.get('specificity', 0) or 0),
+            "val_pr_auc": float(eval_metrics.get('pr_auc', 0) or 0),
+            "local_train_time_sec": local_train_time_sec,
+            "delta_norm": round(delta_norm, 6),
+            "n_train_samples_used": num_samples,
+        }        
         # Add DP metrics if enabled
         if self.enable_dp and self.privacy_engine:
             try:
@@ -598,6 +735,8 @@ def start_flower_client(
     dp_noise_multiplier: float = 1.0,
     dp_max_grad_norm: float = 1.0,
     dp_max_epochs: int = 10,
+    # Split-uri fixe (NOU)
+    splits_dir: str = None,
 ):
     """
     Start Flower client and connect to server.
@@ -648,6 +787,8 @@ def start_flower_client(
         dp_noise_multiplier=dp_noise_multiplier,
         dp_max_grad_norm=dp_max_grad_norm,
         dp_max_epochs=dp_max_epochs,
+        # Split-uri fixe (NOU)
+        splits_dir=splits_dir,
     )
     
     # Configure SSL/TLS if enabled

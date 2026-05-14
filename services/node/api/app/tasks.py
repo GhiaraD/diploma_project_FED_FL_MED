@@ -381,6 +381,10 @@ def federated_training_task(
     dataset_id: str,
     model_name: str = "efficientnet_b0",
     batch_size: int = 32,
+    # Experiment logging (NOU)
+    run_id: str = None,
+    experiments_dir: str = "experiments",
+    splits_dir: str = None,
 ):
     """
     Federated training with Flower.
@@ -425,18 +429,23 @@ def federated_training_task(
     try:
         update_job_status(job_id, "running")
         
+        # Rezolvă splits_dir la cale absolută (dacă e relativ, prefixăm cu /)
+        effective_splits_dir = splits_dir or os.getenv("SPLITS_DIR", None)
+        if effective_splits_dir and not os.path.isabs(effective_splits_dir):
+            effective_splits_dir = "/" + effective_splits_dir
+        
         # Get dataset path
         db = SessionLocal()
         from .database import Dataset
         dataset = db.query(Dataset).filter(Dataset.dataset_id == dataset_id).first()
-        
+
         if not dataset:
             raise ValueError(f"Dataset {dataset_id} not found")
-        
+
         dataset_path = dataset.path
         n_samples = dataset.num_samples
         dataset_name = dataset.name
-        
+
         _log.info(f"Starting Flower client for session {job_id}...")
         _log.step(f"Model: {model_name}")
         _log.step(f"Dataset: {dataset_name} ({dataset_id})")
@@ -465,8 +474,9 @@ def federated_training_task(
             dp_noise_multiplier=float(os.getenv("DP_NOISE_MULTIPLIER", "1.0")),
             dp_max_grad_norm=float(os.getenv("DP_MAX_GRAD_NORM", "1.0")),
             dp_max_epochs=int(os.getenv("DP_MAX_EPOCHS", "10")),
-        )
-        
+            # Split-uri fixe (NOU)
+            splits_dir=effective_splits_dir,
+        )        
         _log.ok("Flower client completed successfully")
         
         metrics = get_last_training_metrics()

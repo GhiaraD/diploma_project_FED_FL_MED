@@ -46,6 +46,10 @@ def start_flower_server(
     enable_server_dp: bool = False,
     server_dp_noise_multiplier: float = 0.1,
     server_dp_sensitivity: float = 1.0,
+    # Experiment logging (NOU)
+    run_id: str = None,
+    experiments_dir: str = "experiments",
+    test_global_csv: str = None,
 ):
     """
     Start Flower server for federated learning.
@@ -87,6 +91,11 @@ def start_flower_server(
     if enable_server_dp:
         _log.step(f"Noise multiplier: {server_dp_noise_multiplier}")
         _log.step(f"Sensitivity: {server_dp_sensitivity}")
+    if run_id:
+        _log.step(f"Run ID: {run_id}")
+        _log.step(f"Experiments dir: {experiments_dir}")
+    if test_global_csv:
+        _log.step(f"Test global CSV: {test_global_csv}")
     
     # Create strategy
     strategy = create_fedmed_strategy(
@@ -115,6 +124,11 @@ def start_flower_server(
         enable_server_dp=enable_server_dp,
         server_dp_noise_multiplier=server_dp_noise_multiplier,
         server_dp_sensitivity=server_dp_sensitivity,
+        # Experiment logging (NOU)
+        run_id=run_id,
+        experiments_dir=experiments_dir,
+        test_global_csv=test_global_csv,
+        num_rounds=num_rounds,
     )
     
     # Configure server
@@ -208,9 +222,12 @@ def main():
     parser.add_argument("--enable-server-dp", type=str, default=None, help="Enable server-side DP (true/false)")
     parser.add_argument("--server-dp-noise-multiplier", type=float, default=None, help="Server-side DP noise multiplier")
     parser.add_argument("--server-dp-sensitivity", type=float, default=None, help="Server-side DP sensitivity")
+    # Experiment logging (NOU)
+    parser.add_argument("--run-id", type=str, default=None, help="Identificator unic al experimentului")
+    parser.add_argument("--experiments-dir", type=str, default=None, help="Directorul rădăcină pentru experimente")
+    parser.add_argument("--test-global-csv", type=str, default=None, help="Calea către test_global.csv")
     # Aggregation strategy
-    parser.add_argument("--aggregation-strategy", type=str, default=None,
-                        help=f"Aggregation strategy: {', '.join(SUPPORTED_STRATEGIES)}")
+    parser.add_argument("--aggregation-strategy", type=str, default=None,                        help=f"Aggregation strategy: {', '.join(SUPPORTED_STRATEGIES)}")
     parser.add_argument("--proximal-mu", type=float, default=None, help="FedProx proximal term (default 0.01)")
     parser.add_argument("--server-momentum", type=float, default=None, help="FedAvgM/FedOpt server momentum (default 0.9)")
     parser.add_argument("--server-lr", type=float, default=None, help="FedOpt/FedAdam/FedYogi server learning rate (default 0.01)")
@@ -255,6 +272,11 @@ def main():
     server_beta2 = args.server_beta2 if args.server_beta2 is not None else float(os.getenv("SERVER_BETA2", "0.99"))
     server_tau = args.server_tau if args.server_tau is not None else float(os.getenv("SERVER_TAU", "1e-3"))
 
+    # Experiment logging configuration (NOU)
+    run_id = args.run_id if args.run_id is not None else os.getenv("RUN_ID", None)
+    experiments_dir = args.experiments_dir if args.experiments_dir is not None else os.getenv("EXPERIMENTS_DIR", "experiments")
+    test_global_csv = args.test_global_csv if args.test_global_csv is not None else os.getenv("TEST_GLOBAL_CSV", None)
+
     # Start server
     start_flower_server(
         server_address=server_address,
@@ -284,6 +306,10 @@ def main():
         enable_server_dp=enable_server_dp,
         server_dp_noise_multiplier=server_dp_noise_multiplier,
         server_dp_sensitivity=server_dp_sensitivity,
+        # Experiment logging (NOU)
+        run_id=run_id,
+        experiments_dir=experiments_dir,
+        test_global_csv=test_global_csv,
     )
 
 

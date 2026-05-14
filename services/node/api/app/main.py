@@ -1218,6 +1218,7 @@ async def start_federated_training(
     dataset_id: str,
     model_name: str = "efficientnet_b0",
     batch_size: int = 32,
+    splits_dir: str = None,
     request: Request = None,
     background_tasks: BackgroundTasks = None,
     current_user: dict = Depends(require_permission("write:federated")),
@@ -1233,6 +1234,8 @@ async def start_federated_training(
         dataset_id: Dataset to use for training
         model_name: Model architecture (resnet18, densenet121, efficientnet_b0)
         batch_size: Batch size for training on this node
+        splits_dir: Opțional — directorul cu split-urile fixe CSV (experiments/splits/).
+                    Dacă e furnizat, se folosesc split-urile fixe în loc de random_split.
     """
     start_time = time.time()
     from .tasks import federated_training_task
@@ -1270,6 +1273,7 @@ async def start_federated_training(
         dataset_id=dataset_id,
         model_name=model_name,
         batch_size=batch_size,
+        splits_dir=splits_dir,
     )
 
     return {

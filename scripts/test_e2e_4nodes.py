@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Fed-Med-FL — Sequential Multi-Strategy Training (5 Nodes)
+Fed-Med-FL — Sequential Multi-Strategy Training (4 Nodes)
 
 Runs 3 consecutive FL sessions, one per aggregation strategy:
   1. FedAvg   — weighted average (baseline)
@@ -14,16 +14,17 @@ import requests
 import time
 import json
 import sys
-from typing import Dict, List, Optional
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
 # ============================================================================
 # SHARED TRAINING PARAMETERS — same for all 3 sessions
 # ============================================================================
 
-NUM_ROUNDS      = 2                  # FL rounds per session
-NUM_EPOCHS      = 2                  # Epochs per round (server pushes to clients)
+NUM_ROUNDS      = 10                  # FL rounds per session
+NUM_EPOCHS      = 1                  # Epochs per round (server pushes to clients)
 MODEL_NAME      = "efficientnet_b0"  # resnet18 | densenet121 | efficientnet_b0
-BATCH_SIZE      = 16                 # Per-node batch size
+BATCH_SIZE      = 32                 # Per-node batch size
 LEARNING_RATE   = 0.001
 OPTIMIZER       = "adam"
 
@@ -33,23 +34,23 @@ OPTIMIZER       = "adam"
 
 SESSIONS = [
     {
-        "label":                "FedAvg (baseline)",
-        "aggregation_strategy": "fedavg",
-    },
-    {
         "label":                "FedAvgM (momentum=0.9)",
         "aggregation_strategy": "fedavgm",
         "server_momentum":      0.9,
     },
     {
-        "label":                "FedProx (mu=0.01)",
-        "aggregation_strategy": "fedprox",
-        "proximal_mu":          0.01,
+        "label":                "FedAvg (baseline)",
+        "aggregation_strategy": "fedavg",
     },
+    # {
+    #     "label":                "FedProx (mu=0.01)",
+    #     "aggregation_strategy": "fedprox",
+    #     "proximal_mu":          0.01,
+    # },
 ]
 
 # ============================================================================
-# NODE CONFIGURATION — matches docker-compose-5nodes.yml
+# NODE CONFIGURATION — matches docker-compose-4nodes.yml
 # ============================================================================
 
 CENTRAL_URL = "http://localhost:8081"
@@ -59,9 +60,7 @@ NODES = [
     {"name": "node2", "url": "http://localhost:8002", "email": "admin@node2.fed-med-fl.com", "password": "AdminNode2@2026"},
     {"name": "node3", "url": "http://localhost:8003", "email": "admin@node3.fed-med-fl.com", "password": "AdminNode3@2026"},
     {"name": "node4", "url": "http://localhost:8004", "email": "admin@node4.fed-med-fl.com", "password": "AdminNode4@2026"},
-    {"name": "node5", "url": "http://localhost:8005", "email": "admin@node5.fed-med-fl.com", "password": "AdminNode5@2026"},
 ]
-
 # ============================================================================
 # TIMEOUTS
 # ============================================================================
@@ -69,8 +68,12 @@ NODES = [
 TIMEOUT             = 30    # HTTP request timeout (seconds)
 POLL_INTERVAL       = 5     # Status polling interval (seconds)
 MAX_TRAINING_WAIT   = 3600  # Max wait per session (seconds)
-SERVER_INIT_WAIT    = 3     # Seconds after starting Flower Server before triggering nodes
+SERVER_INIT_WAIT    = 45    # Seconds after starting Flower Server before triggering nodes
 SERVER_STOP_WAIT    = 60    # Max seconds to wait for Flower Server to stop between sessions
+
+# Experiment logging (NOU)
+EXPERIMENTS_DIR = "experiments"
+SPLITS_DIR = "/experiments/splits"
 
 # ============================================================================
 # Internal state
@@ -230,7 +233,34 @@ def wait_for_flower_to_stop(max_wait: int = SERVER_STOP_WAIT) -> bool:
     return False
 
 
-def start_flower_server(session: Dict) -> bool:
+def force_stop_flower_server() -> bool:
+    """Force-kill Flower Server via the central API kill endpoint, then verify."""
+    if not is_flower_running():
+        return True
+
+    log("Force-stopping Flower Server...")
+    try:
+        r = requests.post(f"{CENTRAL_URL}/api/fl/stop", timeout=TIMEOUT)
+        if r.status_code == 200:
+            log("✓ Flower Server force-stopped via API")
+            time.sleep(2)
+            return not is_flower_running()
+    except Exception:
+        pass
+
+    # Fallback: poll until it stops on its own (max 10s)
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        if not is_flower_running():
+            log("✓ Flower Server stopped")
+            return True
+        time.sleep(2)
+
+    log("⚠ Could not stop Flower Server", "WARNING")
+    return False
+
+
+def start_flower_server(session: Dict, run_id: str = None) -> bool:
     """Start Flower Server with the given session config merged with shared params."""
     strategy = session["aggregation_strategy"]
     log(f"Starting Flower Server — strategy: {strategy.upper()}")
@@ -252,7 +282,10 @@ def start_flower_server(session: Dict) -> bool:
         "server_beta2":          session.get("server_beta2", 0.99),
         "server_tau":            session.get("server_tau", 1e-3),
     }
-
+    # Adaugă run_id dacă e furnizat (NOU)
+    if run_id:
+        params["run_id"] = run_id
+        params["experiments_dir"] = EXPERIMENTS_DIR
     try:
         r = requests.post(
             f"{CENTRAL_URL}/api/fl/start",
@@ -265,6 +298,23 @@ def start_flower_server(session: Dict) -> bool:
                 log("⚠ Flower Server already running — cannot start new session", "WARNING")
                 return False
             log(f"✓ Flower Server started")
+
+            # Așteptăm activ până când serverul e gata să accepte conexiuni gRPC
+            log(f"  Așteptăm ca Flower Server să fie gata (max {SERVER_INIT_WAIT}s)...")
+            start_wait = time.time()
+            deadline = start_wait + SERVER_INIT_WAIT
+            while time.time() < deadline:
+                time.sleep(2)
+                try:
+                    status_r = requests.get(f"{CENTRAL_URL}/flower/status", timeout=5)
+                    if status_r.status_code == 200 and status_r.json().get("flower_server_running"):
+                        elapsed = time.time() - start_wait
+                        log(f"  ✓ Flower Server gata după {elapsed:.0f}s — așteptăm 3s pentru stabilizare gRPC")
+                        time.sleep(3)
+                        return True
+                except Exception:
+                    pass
+            log(f"  ⚠ Flower Server nu a răspuns în {SERVER_INIT_WAIT}s, continuăm oricum", "WARNING")
             return True
         log(f"✗ Failed to start Flower Server: {r.status_code} — {r.text}", "ERROR")
     except Exception as e:
@@ -284,6 +334,7 @@ def start_training(node: Dict, dataset_id: str) -> Optional[str]:
                 "dataset_id": dataset_id,
                 "model_name": MODEL_NAME,
                 "batch_size": BATCH_SIZE,
+                "splits_dir": SPLITS_DIR,
             },
             headers=auth_headers(node["name"]),
             timeout=TIMEOUT,
@@ -388,20 +439,67 @@ def monitor_training(job_ids: Dict[str, str]) -> bool:
 
 
 # ============================================================================
+# Experiment output verification (NOU)
+# ============================================================================
+
+def _generate_run_id(strategy: str, model_name: str) -> str:
+    """
+    Generează run_id cu format: fl_{strategy}_{model}_run{NN}
+    NN = numărul de directoare existente cu același prefix + 1.
+    """
+    model_clean = model_name.replace("-", "_").replace(".", "_")
+    prefix = f"fl_{strategy}_{model_clean}_run"
+
+    exp_dir = Path(EXPERIMENTS_DIR)
+    existing = []
+    if exp_dir.exists():
+        for d in exp_dir.iterdir():
+            if d.is_dir() and d.name.startswith(prefix):
+                existing.append(d.name)
+
+    nn = len(existing) + 1
+    return f"{prefix}{nn:02d}"
+
+
+def verify_experiment_outputs(run_id: str) -> bool:
+    """
+    Verifică existența fișierelor obligatorii pentru un experiment FL.
+
+    Returns:
+        True dacă toate fișierele obligatorii există.
+    """
+    exp_dir = Path(EXPERIMENTS_DIR) / run_id
+    required_files = (
+        [exp_dir / "run_config.json", exp_dir / "central" / "metrics_by_round.csv"]
+        + [exp_dir / "nodes" / f"node{i}_metrics_by_round.csv" for i in range(1, len(NODES) + 1)]
+    )
+
+    missing = [str(f) for f in required_files if not f.exists()]
+    if missing:
+        for m in missing:
+            log(f"  ⚠ Lipsă: {m}", "WARNING")
+        return False
+    return True
+
+
+# ============================================================================
 # Single session runner
 # ============================================================================
 
-def run_session(session_num: int, session: Dict) -> bool:
-    """Run one complete FL session. Returns True on success."""
+def run_session(session_num: int, session: Dict) -> Tuple[bool, str]:
+    """Run one complete FL session. Returns (success, run_id)."""
     label = session["label"]
     strategy = session["aggregation_strategy"]
 
-    log_banner(f"SESSION {session_num}/{len(SESSIONS)}: {label}")
+    # NOU: generează run_id unic pentru această sesiune
+    run_id = _generate_run_id(strategy, MODEL_NAME)
+
+    log_banner(f"SESSION {session_num}/{len(SESSIONS)}: {label} (run_id: {run_id})")
 
     # Start Flower Server for this session
-    if not start_flower_server(session):
+    if not start_flower_server(session, run_id=run_id):
         log(f"✗ Session {session_num} aborted — could not start Flower Server", "ERROR")
-        return False
+        return False, run_id
 
     log(f"  Waiting {SERVER_INIT_WAIT}s for server to initialize...")
     time.sleep(SERVER_INIT_WAIT)
@@ -410,7 +508,7 @@ def run_session(session_num: int, session: Dict) -> bool:
     job_ids = start_training_all()
     if not job_ids:
         log(f"✗ Session {session_num} aborted — could not start training", "ERROR")
-        return False
+        return False, run_id
 
     # Monitor until completion
     success = monitor_training(job_ids)
@@ -419,8 +517,9 @@ def run_session(session_num: int, session: Dict) -> bool:
         log(f"✓ Session {session_num} ({label}) PASSED")
     else:
         log(f"✗ Session {session_num} ({label}) FAILED", "ERROR")
+        force_stop_flower_server()
 
-    return success
+    return success, run_id
 
 
 # ============================================================================
@@ -459,17 +558,18 @@ def main() -> None:
 
     # ── Run sessions sequentially ───────────────────────────────────────────
 
-    results: Dict[str, bool] = {}
+    results: Dict[str, Tuple[bool, str]] = {}
 
     for i, session in enumerate(SESSIONS, 1):
         # Ensure Flower Server is not running before starting a new session
         if i > 1:
             log(f"\nWaiting for Flower Server to stop before session {i}...")
             if not wait_for_flower_to_stop():
-                log("⚠ Proceeding anyway — server may have already stopped", "WARNING")
+                log("⚠ Server did not stop in time — force-stopping...", "WARNING")
+                force_stop_flower_server()
 
-        success = run_session(i, session)
-        results[session["label"]] = success
+        success, run_id = run_session(i, session)
+        results[session["label"]] = (success, run_id)
 
         if not success:
             log(f"\n⚠ Session {i} failed — continuing with remaining sessions", "WARNING")
@@ -478,11 +578,19 @@ def main() -> None:
 
     log_banner("FINAL RESULTS")
     all_passed = True
-    for label, passed in results.items():
+    for label, (passed, run_id) in results.items():
         status = "✓ PASSED" if passed else "✗ FAILED"
-        log(f"  {status}  —  {label}")
+        log(f"  {status}  —  {label} ({run_id})")
         if not passed:
             all_passed = False
+
+    # NOU: Verificare fișiere output
+    log_banner("VERIFICARE FIȘIERE OUTPUT")
+    for label, (passed, run_id) in results.items():
+        if passed:
+            files_ok = verify_experiment_outputs(run_id)
+            file_status = "✓ FIȘIERE OK" if files_ok else "⚠ FIȘIERE LIPSĂ"
+            log(f"  {file_status}  —  {label} ({run_id})")
 
     log("")
     if all_passed:

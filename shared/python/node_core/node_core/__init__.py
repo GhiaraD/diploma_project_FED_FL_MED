@@ -93,6 +93,14 @@ from .flower_strategy import (
     SUPPORTED_STRATEGIES,
 )
 
+# Experiment logging and visualization
+from .experiment_logger import (
+    ExperimentLogger,
+    EpochMetrics,
+    RoundMetrics,
+    NodeRoundMetrics,
+)
+
 # Logging
 from .logger import FedLogger, get_logger
 
@@ -169,4 +177,10 @@ __all__ = [
     # Logging
     'FedLogger',
     'get_logger',
+
+    # Experiment logging
+    'ExperimentLogger',
+    'EpochMetrics',
+    'RoundMetrics',
+    'NodeRoundMetrics',
 ]

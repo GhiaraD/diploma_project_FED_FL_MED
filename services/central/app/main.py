@@ -15,6 +15,7 @@ from datetime import datetime
 import os
 import sys
 import subprocess
+from pathlib import Path
 
 # Add node_core to path
 sys.path.insert(0, '/app/shared/python/node_core')
@@ -136,6 +137,27 @@ def check_flower_server_running() -> bool:
     return _get_flower_process_info() is not None
 
 
+def _generate_run_id(strategy: str, model_name: str, experiments_dir: str = "experiments") -> str:
+    """
+    Generează run_id cu format: fl_{strategy}_{model}_run{NN}
+    NN = numărul de directoare existente cu același prefix + 1.
+    Ex: dacă există fl_fedavg_effb0_run01, generează fl_fedavg_effb0_run02.
+    """
+    # Normalizează model_name (elimină caractere speciale)
+    model_clean = model_name.replace("-", "_").replace(".", "_")
+    prefix = f"fl_{strategy}_{model_clean}_run"
+
+    exp_dir = Path(experiments_dir)
+    existing = []
+    if exp_dir.exists():
+        for d in exp_dir.iterdir():
+            if d.is_dir() and d.name.startswith(prefix):
+                existing.append(d.name)
+
+    nn = len(existing) + 1
+    return f"{prefix}{nn:02d}"
+
+
 @app.get("/health", response_model=HealthResponse)
 def health_check():
     """Health check endpoint."""
@@ -181,6 +203,30 @@ def get_flower_status():
     return response
 
 
+@app.post("/api/fl/stop")
+def stop_fl_server():
+    """
+    Force-stop Flower Server by killing the process on port 8080.
+    """
+    import signal
+
+    process_info = _get_flower_process_info()
+    if process_info is None:
+        return {"status": "not_running", "message": "Flower Server is not running."}
+
+    pid = process_info.get("pid")
+    if pid:
+        try:
+            os.kill(pid, signal.SIGTERM)
+            return {"status": "stopped", "message": f"Flower Server (PID {pid}) terminated."}
+        except ProcessLookupError:
+            return {"status": "stopped", "message": "Process already gone."}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    return {"status": "unknown", "message": "Could not determine PID to kill."}
+
+
 @app.post("/api/fl/start")
 def start_fl_server(
     num_rounds: int = 2,
@@ -198,6 +244,10 @@ def start_fl_server(
     server_beta1: float = 0.9,
     server_beta2: float = 0.99,
     server_tau: float = 1e-3,
+    # Experiment logging (NOU)
+    run_id: Optional[str] = None,
+    experiments_dir: str = "experiments",
+    test_global_csv: Optional[str] = None,
 ):
     """
     Start Flower Server with the given training configuration.
@@ -230,6 +280,17 @@ def start_fl_server(
     import subprocess as _subprocess
     import sys
 
+    # Rezolvă experiments_dir la cale absolută față de /experiments (volumul montat)
+    # dacă e o cale relativă (ex. "experiments" → "/experiments")
+    if not os.path.isabs(experiments_dir):
+        experiments_dir = "/" + experiments_dir
+
+    # Generează run_id dacă nu e furnizat (NOU)
+    effective_run_id = run_id or _generate_run_id(aggregation_strategy, model_name, experiments_dir)
+
+    # Determină test_global_csv implicit dacă nu e furnizat (NOU)
+    effective_test_global_csv = test_global_csv or os.path.join(experiments_dir, "splits", "test_global.csv")
+
     cmd = [
         sys.executable, "-m", "app.flower_server",
         "--num-rounds", str(num_rounds),
@@ -250,12 +311,19 @@ def start_fl_server(
         "--certificates-path", os.getenv("CERTIFICATES_PATH", "/certificates"),
         "--signature-policy", os.getenv("SIGNATURE_POLICY", "log"),
         "--storage-path", STORAGE_ROOT,
+        # Experiment logging (NOU)
+        "--run-id", effective_run_id,
+        "--experiments-dir", experiments_dir,
+        "--test-global-csv", effective_test_global_csv,
     ]
 
+    log_path = os.path.join(experiments_dir, f"flower_server_{effective_run_id}.log")
+    os.makedirs(experiments_dir, exist_ok=True)
+    log_fh = open(log_path, "w")
     _subprocess.Popen(
         cmd,
-        stdout=_subprocess.DEVNULL,
-        stderr=_subprocess.DEVNULL,
+        stdout=log_fh,
+        stderr=log_fh,
         close_fds=True,
     )
 
@@ -271,6 +339,7 @@ def start_fl_server(
             "min_fit_clients": min_fit_clients,
             "min_available_clients": min_available_clients,
             "aggregation_strategy": aggregation_strategy,
+            "run_id": effective_run_id,
         },
     }
 
