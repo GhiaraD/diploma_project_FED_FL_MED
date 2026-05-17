@@ -34,9 +34,12 @@ flwr_mock.client.NumPyClient = object
 sys.modules.setdefault("flwr", flwr_mock)
 sys.modules.setdefault("flwr.client", flwr_mock.client)
 
-# Mock opacus (nu e instalat în venv de test)
-opacus_mock = types.ModuleType("opacus")
-sys.modules.setdefault("opacus", opacus_mock)
+# Mock opacus doar dacă nu e instalat real
+try:
+    import opacus as _opacus_real  # noqa — verificăm dacă e disponibil
+except ImportError:
+    opacus_mock = types.ModuleType("opacus")
+    sys.modules.setdefault("opacus", opacus_mock)
 
 # Mock node_core (are dependențe de model/dataset care nu sunt relevante pentru aceste teste)
 node_core_mock = types.ModuleType("node_core")
