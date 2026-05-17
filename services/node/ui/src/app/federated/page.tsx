@@ -35,6 +35,7 @@ import {
 import Layout from '@/components/Layout';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { useAuth } from '@/contexts/AuthContext';
+import { API_BASE } from '@/config/api';
 
 interface TrainingSession {
   session_id: string;
@@ -72,7 +73,7 @@ export default function FederatedPage() {
   const fetchHistory = async () => {
     try {
       setLoading(true);
-      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8001';
+      const apiBase = API_BASE;
       const response = await fetch(`${apiBase}/api/federated/history`, {
         headers: { 'Authorization': `Bearer ${token}` },
       });

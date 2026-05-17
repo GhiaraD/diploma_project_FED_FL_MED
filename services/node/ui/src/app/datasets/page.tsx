@@ -44,6 +44,7 @@ import {
 import Layout from '@/components/Layout';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { useAuth } from '@/contexts/AuthContext';
+import { API_BASE } from '@/config/api';
 
 interface Dataset {
   dataset_id: string;
@@ -79,6 +80,8 @@ export default function DatasetsPage() {
   const [error, setError] = useState<string | null>(null);
   const [browseDialogOpen, setBrowseDialogOpen] = useState(false);
   const [registering, setRegistering] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [datasetToDelete, setDatasetToDelete] = useState<string | null>(null);
   const { token } = useAuth();
   
   // Browse state
@@ -98,8 +101,7 @@ export default function DatasetsPage() {
   const fetchDatasets = async () => {
     try {
       setLoading(true);
-      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8001';
-      const response = await fetch(`${apiBase}/api/data/list`, {
+      const response = await fetch(`${API_BASE}/api/data/list`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
@@ -118,10 +120,9 @@ export default function DatasetsPage() {
   const browseDirectory = async (path?: string) => {
     try {
       setBrowsing(true);
-      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8001';
-      const url = path 
-        ? `${apiBase}/api/data/browse?directory=${encodeURIComponent(path)}`
-        : `${apiBase}/api/data/browse`;
+      const url = path
+        ? `${API_BASE}/api/data/browse?directory=${encodeURIComponent(path)}`
+        : `${API_BASE}/api/data/browse`;
       
       const response = await fetch(url, {
         headers: {
@@ -156,8 +157,7 @@ export default function DatasetsPage() {
 
     try {
       setRegistering(true);
-      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8001';
-      const response = await fetch(`${apiBase}/api/data/register`, {
+      const response = await fetch(`${API_BASE}/api/data/register`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -188,8 +188,7 @@ export default function DatasetsPage() {
 
   const handleSetActive = async (datasetId: string) => {
     try {
-      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8001';
-      const response = await fetch(`${apiBase}/api/data/set-active/${datasetId}`, {
+      const response = await fetch(`${API_BASE}/api/data/set-active/${datasetId}`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -204,12 +203,17 @@ export default function DatasetsPage() {
     }
   };
 
-  const handleDelete = async (datasetId: string) => {
-    if (!confirm('Unregister this dataset? (Files will be preserved on system)')) return;
+  const handleDeleteRequest = (datasetId: string) => {
+    setDatasetToDelete(datasetId);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!datasetToDelete) return;
+    setDeleteDialogOpen(false);
 
     try {
-      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8001';
-      const response = await fetch(`${apiBase}/api/data/${datasetId}`, {
+      const response = await fetch(`${API_BASE}/api/data/${datasetToDelete}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -353,7 +357,7 @@ export default function DatasetsPage() {
                             <IconButton
                               size="small"
                               color="error"
-                              onClick={() => handleDelete(dataset.dataset_id)}
+                              onClick={() => handleDeleteRequest(dataset.dataset_id)}
                             >
                               <DeleteIcon />
                             </IconButton>
@@ -369,8 +373,7 @@ export default function DatasetsPage() {
         )}
 
         {/* Browse Dialog */}
-        <Dialog open={browseDialogOpen} onClose={() => setBrowseDialogOpen(false)} maxWidth="md" fullWidth>
-          <DialogTitle>Browse Hospital System for Datasets</DialogTitle>
+        <Dialog open={browseDialogOpen} onClose={() => setBrowseDialogOpen(false)} maxWidth="md" fullWidth>          <DialogTitle>Browse Hospital System for Datasets</DialogTitle>
           <DialogContent>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
               Browse the hospital filesystem to find and register existing datasets.
@@ -496,6 +499,22 @@ export default function DatasetsPage() {
               disabled={!selectedPath || !datasetName || registering}
             >
               {registering ? <CircularProgress size={24} /> : 'Register Dataset'}
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Delete Confirmation Dialog */}
+        <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)} maxWidth="xs" fullWidth>
+          <DialogTitle>Unregister Dataset</DialogTitle>
+          <DialogContent>
+            <Typography variant="body2">
+              Are you sure you want to unregister this dataset? The files will be preserved on the system.
+            </Typography>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleDeleteConfirm} variant="contained" color="error">
+              Unregister
             </Button>
           </DialogActions>
         </Dialog>

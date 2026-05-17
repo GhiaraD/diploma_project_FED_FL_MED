@@ -65,7 +65,7 @@ export default function MetricsCards({ metrics }: MetricsCardsProps) {
             </Typography>
             <Typography variant="h4" sx={{ fontWeight: 600 }}>
               {metric.value !== undefined ? metric.format(metric.value) : (
-                <Typography variant="body2" sx={{ color: 'text.secondary', fontStyle: 'italic' }}>
+                <Typography component="span" variant="body2" sx={{ color: 'text.secondary', fontStyle: 'italic' }}>
                   N/A
                 </Typography>
               )}

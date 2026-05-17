@@ -15,28 +15,8 @@ import SectionHeader from '@/components/SectionHeader';
 import JobsTable from '@/components/JobsTable';
 import MetricsCards from '@/components/MetricsCards';
 import { useAuth } from '@/contexts/AuthContext';
-
-interface Model {
-  model_id: string;
-  model_name: string;
-  version: string;
-  type: string;
-  metrics?: {
-    accuracy?: number;
-    f1?: number;
-    auc?: number;
-    sensitivity?: number;
-    specificity?: number;
-  };
-}
-
-interface Job {
-  job_id: string;
-  job_type: string;
-  status: string;
-  result?: any;
-  created_at: string;
-}
+import { API_BASE } from '@/config/api';
+import type { Job, Model } from '@/types';
 
 interface NodeData {
   healthy: boolean;
@@ -55,7 +35,7 @@ export default function DashboardPage() {
   const [fedRounds, setFedRounds] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const { token } = useAuth();
+  const { token, user } = useAuth();
 
   useEffect(() => {
     if (token) {
@@ -67,7 +47,7 @@ export default function DashboardPage() {
 
   const fetchDashboardData = async () => {
     try {
-      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8001';
+      const apiBase = API_BASE;
       
       // Fetch node status
       const statusResponse = await fetch(`${apiBase}/api/node/status`, {
@@ -148,7 +128,7 @@ export default function DashboardPage() {
 
   return (
     <ProtectedRoute>
-      <Layout nodeId="node1">
+      <Layout nodeId={user?.node_id}>
         <Container maxWidth="lg" sx={{ py: 4 }}>
           {error && (
             <Alert severity="error" sx={{ mb: 3 }}>

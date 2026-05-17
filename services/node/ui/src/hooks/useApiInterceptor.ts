@@ -1,5 +1,5 @@
 'use client';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
 
@@ -7,57 +7,47 @@ export const useApiInterceptor = () => {
   const { token, logout, checkTokenExpiration, forceLogout } = useAuth();
   const router = useRouter();
 
+  // Keep latest values accessible inside the patched fetch without re-patching
+  const stateRef = useRef({ token, logout, checkTokenExpiration, forceLogout, router });
   useEffect(() => {
-    // Intercept fetch requests to check for 401 responses
+    stateRef.current = { token, logout, checkTokenExpiration, forceLogout, router };
+  });
+
+  useEffect(() => {
+    // Guard: patch only once — the same patchedFetch stays for the lifetime of the app
+    if ((window.fetch as any).__intercepted) {
+      return;
+    }
+
     const originalFetch = window.fetch;
-    
-    window.fetch = async (...args) => {
-      // Check token expiration before making request
-      if (token && !checkTokenExpiration()) {
-        // Token expired, force logout
-        console.log('Token expired before request, forcing logout...');
-        forceLogout();
-        
-        // Return a rejected promise with a proper Response object
-        return Promise.reject(new Response(
-          JSON.stringify({ detail: 'Token expired' }), 
-          { 
-            status: 401, 
-            statusText: 'Unauthorized',
-            headers: { 'Content-Type': 'application/json' }
-          }
-        ));
+
+    const patchedFetch = async (...args: Parameters<typeof fetch>) => {
+      const { token: currentToken, checkTokenExpiration: checkExp, forceLogout: doForceLogout, logout: doLogout, router: currentRouter } = stateRef.current;
+
+      // Check token expiration before making the request
+      if (currentToken && !checkExp()) {
+        doForceLogout();
+        throw new Error('Token expired');
       }
 
-      try {
-        const response = await originalFetch(...args);
-        
-        // Check if response is 401 (Unauthorized)
-        if (response.status === 401) {
-          console.log('Received 401 response, token may be expired');
-          
-          // Check if this is an auth-related request
-          const url = typeof args[0] === 'string' ? args[0] : args[0].url;
-          if (url.includes('/api/') && !url.includes('/api/auth/login')) {
-            // Force logout and redirect to login
-            await logout();
-            setTimeout(() => {
-              router.push('/login');
-            }, 0);
-          }
+      const response = await originalFetch(...args);
+
+      // On 401, log out — but not for the login endpoint itself
+      if (response.status === 401) {
+        const url = typeof args[0] === 'string' ? args[0] : (args[0] as Request).url;
+        if (!url.includes('/api/auth/login')) {
+          await doLogout();
+          setTimeout(() => currentRouter.push('/login'), 0);
         }
-        
-        return response;
-      } catch (error) {
-        // Log the error but let it propagate normally
-        console.error('Fetch error:', error);
-        throw error;
       }
+
+      return response;
     };
 
-    // Cleanup: restore original fetch on unmount
-    return () => {
-      window.fetch = originalFetch;
-    };
-  }, [token, logout, router, checkTokenExpiration, forceLogout]);
+    (patchedFetch as any).__intercepted = true;
+    window.fetch = patchedFetch;
+
+    // No cleanup: the patch is intentionally permanent for the app lifetime.
+    // Removing it on unmount would break fetch for any component that outlives Layout.
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 };

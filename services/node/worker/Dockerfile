@@ -34,4 +34,4 @@ ENV PYTHONPATH=/app:/app/shared/python/node_core
 
 WORKDIR /app/worker
 
-CMD ["celery", "-A", "run_worker:celery_app", "worker", "--loglevel=INFO"]
+CMD ["celery", "-A", "run_worker:celery_app", "worker", "--loglevel=INFO", "--max-tasks-per-child=1"]

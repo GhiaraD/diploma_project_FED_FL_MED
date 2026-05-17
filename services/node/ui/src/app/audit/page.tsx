@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import Layout from '@/components/Layout';
 import ProtectedRoute from '@/components/ProtectedRoute';
+import { API_BASE } from '@/config/api';
 import {
   Container,
   Paper,
@@ -18,6 +19,7 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TablePagination,
   CircularProgress,
   Alert,
   Chip,
@@ -67,6 +69,8 @@ export default function AuditPage() {
   const [eventTypeFilter, setEventTypeFilter] = useState('all');
   const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
   const [detailsDialogOpen, setDetailsDialogOpen] = useState(false);
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(25);
   
   const { token } = useAuth();
 
@@ -79,9 +83,8 @@ export default function AuditPage() {
   const fetchAuditLogs = async () => {
     try {
       setIsLoading(true);
-      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8001';
-      
-      const response = await fetch(`${apiBase}/api/auth/audit-logs?limit=100`, {
+
+      const response = await fetch(`${API_BASE}/api/auth/audit-logs?limit=100`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
@@ -153,6 +156,15 @@ export default function AuditPage() {
     setDetailsDialogOpen(false);
   };
 
+  const handleChangePage = (_: unknown, newPage: number) => {
+    setPage(newPage);
+  };
+
+  const handleChangeRowsPerPage = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setRowsPerPage(parseInt(event.target.value, 10));
+    setPage(0);
+  };
+
   const filteredLogs = logs.filter(log => {
     const matchesSearch = filter === '' || 
       log.event_type.toLowerCase().includes(filter.toLowerCase()) ||
@@ -165,6 +177,11 @@ export default function AuditPage() {
   });
 
   const eventTypes = ['all', ...Array.from(new Set(logs.map(log => log.event_type)))];
+
+  const paginatedLogs = filteredLogs.slice(
+    page * rowsPerPage,
+    page * rowsPerPage + rowsPerPage,
+  );
 
   return (
     <ProtectedRoute>
@@ -231,8 +248,7 @@ export default function AuditPage() {
               <Typography variant="body2" color="text.secondary">
                 Showing {filteredLogs.length} of {logs.length} events
               </Typography>
-            </Box>
-          </Paper>
+            </Box>          </Paper>
 
           {/* Error State */}
           {error && (
@@ -260,6 +276,7 @@ export default function AuditPage() {
 
           {/* Audit Logs Table */}
           {!isLoading && !error && (
+            <>
             <TableContainer component={Paper}>
               <Table>
                 <TableHead>
@@ -284,7 +301,7 @@ export default function AuditPage() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filteredLogs.map((log) => (
+                    paginatedLogs.map((log) => (
                       <TableRow key={log.id} hover>
                         <TableCell>
                           <Typography variant="body2">
@@ -370,6 +387,16 @@ export default function AuditPage() {
                 </TableBody>
               </Table>
             </TableContainer>
+            <TablePagination
+              rowsPerPageOptions={[10, 25, 50, 100]}
+              component="div"
+              count={filteredLogs.length}
+              rowsPerPage={rowsPerPage}
+              page={page}
+              onPageChange={handleChangePage}
+              onRowsPerPageChange={handleChangeRowsPerPage}
+            />
+            </>
           )}
 
           {/* Details Dialog */}

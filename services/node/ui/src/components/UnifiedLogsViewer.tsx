@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Box,
   Paper,
@@ -54,7 +54,7 @@ export default function UnifiedLogsViewer({ jobId, jobStatus, apiBase, token }: 
   }, [logs, autoScroll]);
 
   // Load static logs
-  const loadStaticLogs = async () => {
+  const loadStaticLogs = useCallback(async () => {
     if (isPaused) return; // Don't load if paused
     
     setIsLoadingStatic(true);
@@ -97,7 +97,7 @@ export default function UnifiedLogsViewer({ jobId, jobStatus, apiBase, token }: 
     } finally {
       setIsLoadingStatic(false);
     }
-  };
+  }, [jobId, token, apiBase, isPaused]);
 
   // Start polling logs (for running jobs)
   const startPolling = () => {
@@ -183,7 +183,7 @@ export default function UnifiedLogsViewer({ jobId, jobStatus, apiBase, token }: 
     initialize();
 
     return () => stopPolling();
-  }, [jobId]);
+  }, [jobId, loadStaticLogs]);
 
   // Get status color
   const getStatusColor = (status: string) => {

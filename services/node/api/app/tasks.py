@@ -91,6 +91,7 @@ def train_local_model_task(
         batch_size: Batch size
         learning_rate: Learning rate
     """
+    model = None
     try:
         update_job_status(job_id, "running")
         
@@ -236,6 +237,13 @@ def train_local_model_task(
         _log.fail(f"Training failed: {e}")
         update_job_status(job_id, "failed", error=str(e))
         raise
+    finally:
+        # Release GPU memory
+        if model is not None:
+            model.cpu()
+            del model
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 
 @celery_app.task(name="run_inference")
@@ -254,6 +262,7 @@ def run_inference_task(
         model_id: Model ID (if None, uses deployed model)
         generate_gradcam: Whether to generate Grad-CAM overlays
     """
+    model = None
     try:
         job_log = get_logger(job_id)
         job_log.info(f"Starting inference job")
@@ -274,7 +283,10 @@ def run_inference_task(
         
         if not model_record:
             raise ValueError("No model found")
-        
+
+        model_name = model_record.model_name
+        model_path = model_record.file_path
+
         job_log.info(f"Loading model: {model_name}")
         job_log.step(f"Model path: {model_path}")
         job_log.step(f"Device: {settings.DEVICE}")
@@ -373,6 +385,13 @@ def run_inference_task(
         get_logger(job_id).fail(f"Inference job failed: {e}")
         update_job_status(job_id, "failed", error=str(e))
         raise
+    finally:
+        # Release GPU memory
+        if model is not None:
+            model.cpu()
+            del model
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 
 @celery_app.task(name="federated_training")

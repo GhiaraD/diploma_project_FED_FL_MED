@@ -42,8 +42,9 @@ import {
 import Layout from '@/components/Layout';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { useAuth } from '@/contexts/AuthContext';
+import { API_BASE } from '@/config/api';
 
-const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8001';
+const apiBase = API_BASE;
 
 // ─── Grad-CAM split components ───────────────────────────────────────────────
 // State lives in the parent (InferencePage) via a shared ref object.
@@ -279,6 +280,7 @@ export default function InferencePage() {
   const [error, setError] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const [results, setResults] = useState<any[]>([]);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   
   // History state
   const [inferenceHistory, setInferenceHistory] = useState<any[]>([]);
@@ -407,6 +409,12 @@ export default function InferencePage() {
       browseDirectory(currentDir);
       loadInferenceHistory();
     }
+    return () => {
+      // Clean up any active polling interval on unmount
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+      }
+    };
   }, [token]);
 
   // Load inference history - silent version (no loading spinner) for background refreshes
@@ -530,38 +538,47 @@ export default function InferencePage() {
   };
 
   // Poll for inference results
-  const pollResults = async (jobId: string) => {
+  const pollResults = (activeJobId: string) => {
     const maxAttempts = 60; // 5 minutes max
     let attempts = 0;
-    
-    const poll = setInterval(async () => {
+
+    // Clear any existing poll before starting a new one
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+    }
+
+    pollIntervalRef.current = setInterval(async () => {
       try {
         attempts++;
-        
-        const response = await fetch(`${apiBase}/api/infer/results/${jobId}`, {
+
+        const response = await fetch(`${apiBase}/api/infer/results/${activeJobId}`, {
           headers: {
             'Authorization': `Bearer ${token}`,
           },
         });
         const data = await response.json();
-        
+
         if (data.status === 'completed') {
-          clearInterval(poll);
+          clearInterval(pollIntervalRef.current!);
+          pollIntervalRef.current = null;
           setResults(data.results || []);
           setSelectedResultIndex(0);
           setLoading(false);
-          loadInferenceHistorySilent(); // Refresh history silently
+          loadInferenceHistorySilent();
         } else if (data.status === 'failed') {
-          clearInterval(poll);
+          clearInterval(pollIntervalRef.current!);
+          pollIntervalRef.current = null;
           setError('Inference job failed');
           setLoading(false);
         } else if (attempts >= maxAttempts) {
-          clearInterval(poll);
+          clearInterval(pollIntervalRef.current!);
+          pollIntervalRef.current = null;
           setError('Inference timeout');
           setLoading(false);
         }
       } catch (err) {
-        clearInterval(poll);
+        clearInterval(pollIntervalRef.current!);
+        pollIntervalRef.current = null;
         setError('Failed to get results');
         setLoading(false);
       }

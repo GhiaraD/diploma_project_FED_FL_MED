@@ -7,27 +7,15 @@ import {
   Box,
   Typography,
 } from '@mui/material';
+import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
+import { tokenSecondsRemaining } from '@/utils/jwt';
 
 export default function TokenExpirationWarning() {
   const { token, logout } = useAuth();
+  const router = useRouter();
   const [showWarning, setShowWarning] = useState(false);
   const [timeLeft, setTimeLeft] = useState<number>(0);
-
-  // Decode JWT token to get expiration time
-  const decodeToken = (token: string) => {
-    try {
-      const base64Url = token.split('.')[1];
-      const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-      const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
-        return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-      }).join(''));
-      return JSON.parse(jsonPayload);
-    } catch (error) {
-      console.error('Error decoding token:', error);
-      return null;
-    }
-  };
 
   useEffect(() => {
     if (!token) {
@@ -36,43 +24,23 @@ export default function TokenExpirationWarning() {
     }
 
     const checkExpiration = () => {
-      const decoded = decodeToken(token);
-      if (!decoded || !decoded.exp) {
-        return;
-      }
-
-      const currentTime = Math.floor(Date.now() / 1000);
-      const expirationTime = decoded.exp;
-      const timeUntilExpiration = expirationTime - currentTime;
-
-      setTimeLeft(timeUntilExpiration);
-
-      // Show warning if less than 30 seconds left (for 3-minute tokens)
-      if (timeUntilExpiration > 0 && timeUntilExpiration <= 30) {
-        setShowWarning(true);
-      } else {
-        setShowWarning(false);
-      }
+      const seconds = tokenSecondsRemaining(token);
+      setTimeLeft(seconds);
+      setShowWarning(seconds > 0 && seconds <= 30);
     };
 
-    // Check immediately
     checkExpiration();
-
-    // Set up interval to check every 5 seconds
     const interval = setInterval(checkExpiration, 5000);
-
     return () => clearInterval(interval);
   }, [token]);
 
   const handleExtendSession = () => {
-    // For now, just redirect to login page
-    // In a real app, you might want to refresh the token
-    window.location.href = '/login';
+    router.push('/login');
   };
 
   const handleLogoutNow = async () => {
     await logout();
-    window.location.href = '/login';
+    router.push('/login');
   };
 
   if (!showWarning || timeLeft <= 0) {

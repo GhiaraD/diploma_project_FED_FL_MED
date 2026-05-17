@@ -25,17 +25,8 @@ import {
 import Layout from '@/components/Layout';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { useAuth } from '@/contexts/AuthContext';
-
-interface Model {
-  model_id: string;
-  model_name: string;
-  version: string;
-  type: string;
-  labels: string[];
-  session_id: string | null;
-  metrics: any;
-  created_at: string;
-}
+import { API_BASE } from '@/config/api';
+import type { Model } from '@/types';
 
 export default function ModelsPage() {
   const [models, setModels] = useState<Model[]>([]);
@@ -53,8 +44,7 @@ export default function ModelsPage() {
   const fetchModels = async () => {
     try {
       setLoading(true);
-      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8001';
-      const response = await fetch(`${apiBase}/api/models/registry`, {
+      const response = await fetch(`${API_BASE}/api/models/registry`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
@@ -79,8 +69,7 @@ export default function ModelsPage() {
   const handlePromote = async (modelId: string) => {
     try {
       setPromoting(modelId);
-      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8001';
-      const response = await fetch(`${apiBase}/api/models/promote`, {
+      const response = await fetch(`${API_BASE}/api/models/promote`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',

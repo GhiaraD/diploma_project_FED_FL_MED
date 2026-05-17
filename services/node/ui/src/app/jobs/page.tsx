@@ -32,19 +32,8 @@ import Layout from '@/components/Layout';
 import UnifiedLogsViewer from '@/components/UnifiedLogsViewer';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { useAuth } from '@/contexts/AuthContext';
-
-interface Job {
-  job_id: string;
-  job_type: string;
-  status: string;
-  params: any;
-  result: any;
-  error: string | null;
-  created_at: string;
-  started_at: string | null;
-  completed_at: string | null;
-  duration: number | null;
-}
+import { API_BASE } from '@/config/api';
+import type { Job } from '@/types';
 
 export default function JobsPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -56,8 +45,6 @@ export default function JobsPage() {
   const [logsDialogOpen, setLogsDialogOpen] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const { token } = useAuth();
-
-  const API_BASE = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8001';
 
   // Fetch jobs
   const fetchJobs = async () => {
@@ -312,7 +299,7 @@ export default function JobsPage() {
                   jobId={selectedJob.job_id}
                   jobStatus={selectedJob.status}
                   apiBase={API_BASE}
-                  token={token}
+                  token={token ?? ''}
                 />
               </>
             )}

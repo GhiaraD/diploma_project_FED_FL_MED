@@ -21,7 +21,7 @@ from typing import Dict, List, Optional, Tuple
 # SHARED TRAINING PARAMETERS — same for all 3 sessions
 # ============================================================================
 
-NUM_ROUNDS      = 10                  # FL rounds per session
+NUM_ROUNDS      = 1                  # FL rounds per session
 NUM_EPOCHS      = 1                  # Epochs per round (server pushes to clients)
 MODEL_NAME      = "efficientnet_b0"  # resnet18 | densenet121 | efficientnet_b0
 BATCH_SIZE      = 32                 # Per-node batch size
@@ -38,10 +38,10 @@ SESSIONS = [
         "aggregation_strategy": "fedavgm",
         "server_momentum":      0.9,
     },
-    {
-        "label":                "FedAvg (baseline)",
-        "aggregation_strategy": "fedavg",
-    },
+    # {
+    #     "label":                "FedAvg (baseline)",
+    #     "aggregation_strategy": "fedavg",
+    # },
     # {
     #     "label":                "FedProx (mu=0.01)",
     #     "aggregation_strategy": "fedprox",

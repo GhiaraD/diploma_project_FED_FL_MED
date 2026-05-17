@@ -18,6 +18,7 @@ import { PlayArrow as PlayArrowIcon } from '@mui/icons-material';
 import Layout from '@/components/Layout';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import { useAuth } from '@/contexts/AuthContext';
+import { API_BASE } from '@/config/api';
 
 export default function TrainPage() {
   const [datasets, setDatasets] = useState<any[]>([]);
@@ -40,8 +41,7 @@ export default function TrainPage() {
 
   const fetchDatasets = async () => {
     try {
-      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8001';
-      const response = await fetch(`${apiBase}/api/data/list`, {
+      const response = await fetch(`${API_BASE}/api/data/list`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
@@ -63,8 +63,7 @@ export default function TrainPage() {
     try {
       setLoading(true);
       setError(null);
-      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8001';
-      const response = await fetch(`${apiBase}/api/train/local`, {
+      const response = await fetch(`${API_BASE}/api/train/local`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
