@@ -1,52 +1,39 @@
 #!/usr/bin/env python3
 """
-Fed-Med-FL — Sequential Multi-Strategy Training (4 Nodes)
+Fed-Med-FL — Sequential Multi-Strategy Training (4 Nodes) — UI Dataset Mode
 
-Runs 3 consecutive FL sessions, one per aggregation strategy:
-  1. FedAvg   — weighted average (baseline)
-  2. FedAvgM  — FedAvg with server-side momentum  
-  3. FedProx  — FedAvg with proximal regularization
+Identical to test_e2e_4nodes.py with one difference:
+  training is started WITHOUT splits_dir, so each node uses the dataset
+  registered and activated via the UI (train/ val/ test/ folders).
 
-All sessions share the same base parameters below.
-Edit the constants to adjust the run.
+This exercises _load_data() path 2 in flower_client.py.
 """
 import requests
 import time
-import json
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 # ============================================================================
-# SHARED TRAINING PARAMETERS — same for all 3 sessions
+# SHARED TRAINING PARAMETERS
 # ============================================================================
 
-NUM_ROUNDS      = 1                  # FL rounds per session
-NUM_EPOCHS      = 1                  # Epochs per round (server pushes to clients)
-MODEL_NAME      = "efficientnet_b0"  # resnet18 | densenet121 | efficientnet_b0
-BATCH_SIZE      = 32                 # Per-node batch size
+NUM_ROUNDS      = 1
+NUM_EPOCHS      = 1
+MODEL_NAME      = "efficientnet_b0"
+BATCH_SIZE      = 32
 LEARNING_RATE   = 0.001
 OPTIMIZER       = "adam"
 
 # ============================================================================
-# SESSIONS — each defines only what differs between runs
+# SESSIONS
 # ============================================================================
 
 SESSIONS = [
-    # {
-    #     "label":                "FedAvgM (momentum=0.9)",
-    #     "aggregation_strategy": "fedavgm",
-    #     "server_momentum":      0.9,
-    # },
     {
         "label":                "FedAvg (baseline)",
         "aggregation_strategy": "fedavg",
     },
-    # {
-    #     "label":                "FedProx (mu=0.01)",
-    #     "aggregation_strategy": "fedprox",
-    #     "proximal_mu":          0.01,
-    # },
 ]
 
 # ============================================================================
@@ -61,19 +48,16 @@ NODES = [
     {"name": "node3", "url": "http://localhost:8003", "email": "admin@node3.fed-med-fl.com", "password": "AdminNode3@2026"},
     {"name": "node4", "url": "http://localhost:8004", "email": "admin@node4.fed-med-fl.com", "password": "AdminNode4@2026"},
 ]
+
 # ============================================================================
 # TIMEOUTS
 # ============================================================================
 
-TIMEOUT             = 30    # HTTP request timeout (seconds)
-POLL_INTERVAL       = 5     # Status polling interval (seconds)
-MAX_TRAINING_WAIT   = 3600  # Max wait per session (seconds)
-SERVER_INIT_WAIT    = 45    # Seconds after starting Flower Server before triggering nodes
-SERVER_STOP_WAIT    = 60    # Max seconds to wait for Flower Server to stop between sessions
-
-# Experiment logging (NOU)
-EXPERIMENTS_DIR = "experiments"
-SPLITS_DIR = "/experiments/splits"
+TIMEOUT             = 30
+POLL_INTERVAL       = 5
+MAX_TRAINING_WAIT   = 3600
+SERVER_INIT_WAIT    = 45
+SERVER_STOP_WAIT    = 60
 
 # ============================================================================
 # Internal state
@@ -174,36 +158,18 @@ def get_active_dataset(node: Dict) -> Optional[str]:
     return None
 
 
-def activate_first_dataset(node: Dict) -> bool:
-    try:
-        r = requests.get(
-            f"{node['url']}/api/data/list",
-            headers=auth_headers(node["name"]),
-            timeout=TIMEOUT,
-        )
-        if r.status_code != 200 or not r.json():
-            log(f"✗ No datasets found for {node['name']}", "ERROR")
-            return False
-
-        dataset_id = r.json()[0].get("dataset_id")
-        activate = requests.post(
-            f"{node['url']}/api/data/set-active/{dataset_id}",
-            headers=auth_headers(node["name"]),
-            timeout=TIMEOUT,
-        )
-        if activate.status_code == 200:
-            log(f"✓ Dataset activated for {node['name']}: {dataset_id}")
+def check_active_datasets() -> bool:
+    """Verify every node has an active dataset set via the UI. Does not modify anything."""
+    log("Checking active datasets on all nodes...")
+    ok = True
+    for node in NODES:
+        dataset_id = get_active_dataset(node)
+        if dataset_id:
+            log(f"✓ {node['name']} — active dataset: {dataset_id}")
         else:
-            log(f"⚠ Could not activate dataset for {node['name']}", "WARNING")
-        return True
-    except Exception as e:
-        log(f"✗ Error activating dataset for {node['name']}: {e}", "ERROR")
-        return False
-
-
-def activate_all_datasets() -> bool:
-    log("Activating datasets on all nodes...")
-    return all(activate_first_dataset(node) for node in NODES)
+            log(f"✗ {node['name']} — no active dataset. Register and activate one via the UI.", "ERROR")
+            ok = False
+    return ok
 
 
 # ============================================================================
@@ -221,7 +187,6 @@ def is_flower_running() -> bool:
 
 
 def wait_for_flower_to_stop(max_wait: int = SERVER_STOP_WAIT) -> bool:
-    """Wait until Flower Server stops (it stops automatically after all rounds complete)."""
     log(f"Waiting for Flower Server to stop (max {max_wait}s)...")
     deadline = time.time() + max_wait
     while time.time() < deadline:
@@ -234,7 +199,6 @@ def wait_for_flower_to_stop(max_wait: int = SERVER_STOP_WAIT) -> bool:
 
 
 def force_stop_flower_server() -> bool:
-    """Force-kill Flower Server via the central API kill endpoint, then verify."""
     if not is_flower_running():
         return True
 
@@ -248,7 +212,6 @@ def force_stop_flower_server() -> bool:
     except Exception:
         pass
 
-    # Fallback: poll until it stops on its own (max 10s)
     deadline = time.time() + 10
     while time.time() < deadline:
         if not is_flower_running():
@@ -260,8 +223,7 @@ def force_stop_flower_server() -> bool:
     return False
 
 
-def start_flower_server(session: Dict, run_id: str = None) -> bool:
-    """Start Flower Server with the given session config merged with shared params."""
+def start_flower_server(session: Dict) -> bool:
     strategy = session["aggregation_strategy"]
     log(f"Starting Flower Server — strategy: {strategy.upper()}")
 
@@ -274,7 +236,6 @@ def start_flower_server(session: Dict, run_id: str = None) -> bool:
         "min_fit_clients":       len(NODES),
         "min_available_clients": len(NODES),
         "aggregation_strategy":  strategy,
-        # Strategy-specific overrides from session dict (defaults if not present)
         "proximal_mu":           session.get("proximal_mu", 0.01),
         "server_momentum":       session.get("server_momentum", 0.9),
         "server_lr":             session.get("server_lr", 0.01),
@@ -282,10 +243,7 @@ def start_flower_server(session: Dict, run_id: str = None) -> bool:
         "server_beta2":          session.get("server_beta2", 0.99),
         "server_tau":            session.get("server_tau", 1e-3),
     }
-    # Adaugă run_id dacă e furnizat (NOU)
-    if run_id:
-        params["run_id"] = run_id
-        params["experiments_dir"] = EXPERIMENTS_DIR
+    # No run_id — experiment logging not used in UI mode
     try:
         r = requests.post(
             f"{CENTRAL_URL}/api/fl/start",
@@ -297,10 +255,9 @@ def start_flower_server(session: Dict, run_id: str = None) -> bool:
             if result.get("status") == "already_running":
                 log("⚠ Flower Server already running — cannot start new session", "WARNING")
                 return False
-            log(f"✓ Flower Server started")
+            log("✓ Flower Server started")
 
-            # Așteptăm activ până când serverul e gata să accepte conexiuni gRPC
-            log(f"  Așteptăm ca Flower Server să fie gata (max {SERVER_INIT_WAIT}s)...")
+            log(f"  Waiting for Flower Server to be ready (max {SERVER_INIT_WAIT}s)...")
             start_wait = time.time()
             deadline = start_wait + SERVER_INIT_WAIT
             while time.time() < deadline:
@@ -309,12 +266,12 @@ def start_flower_server(session: Dict, run_id: str = None) -> bool:
                     status_r = requests.get(f"{CENTRAL_URL}/flower/status", timeout=5)
                     if status_r.status_code == 200 and status_r.json().get("flower_server_running"):
                         elapsed = time.time() - start_wait
-                        log(f"  ✓ Flower Server gata după {elapsed:.0f}s — așteptăm 3s pentru stabilizare gRPC")
+                        log(f"  ✓ Flower Server ready after {elapsed:.0f}s — waiting 3s for gRPC stabilization")
                         time.sleep(3)
                         return True
                 except Exception:
                     pass
-            log(f"  ⚠ Flower Server nu a răspuns în {SERVER_INIT_WAIT}s, continuăm oricum", "WARNING")
+            log(f"  ⚠ Flower Server did not respond in {SERVER_INIT_WAIT}s, continuing anyway", "WARNING")
             return True
         log(f"✗ Failed to start Flower Server: {r.status_code} — {r.text}", "ERROR")
     except Exception as e:
@@ -323,7 +280,7 @@ def start_flower_server(session: Dict, run_id: str = None) -> bool:
 
 
 # ============================================================================
-# Training
+# Training — no splits_dir, uses UI dataset (train/ val/ test/ folders)
 # ============================================================================
 
 def start_training(node: Dict, dataset_id: str) -> Optional[str]:
@@ -334,7 +291,7 @@ def start_training(node: Dict, dataset_id: str) -> Optional[str]:
                 "dataset_id": dataset_id,
                 "model_name": MODEL_NAME,
                 "batch_size": BATCH_SIZE,
-                "splits_dir": SPLITS_DIR,
+                # splits_dir intentionally omitted — uses UI dataset path 2
             },
             headers=auth_headers(node["name"]),
             timeout=TIMEOUT,
@@ -439,78 +396,26 @@ def monitor_training(job_ids: Dict[str, str]) -> bool:
 
 
 # ============================================================================
-# Experiment output verification (NOU)
-# ============================================================================
-
-def _generate_run_id(strategy: str, model_name: str) -> str:
-    """
-    Generează run_id cu format: fl_{strategy}_{model}_run{NN}
-    NN = numărul de directoare existente cu același prefix + 1.
-    """
-    model_clean = model_name.replace("-", "_").replace(".", "_")
-    prefix = f"fl_{strategy}_{model_clean}_run"
-
-    exp_dir = Path(EXPERIMENTS_DIR)
-    existing = []
-    if exp_dir.exists():
-        for d in exp_dir.iterdir():
-            if d.is_dir() and d.name.startswith(prefix):
-                existing.append(d.name)
-
-    nn = len(existing) + 1
-    return f"{prefix}{nn:02d}"
-
-
-def verify_experiment_outputs(run_id: str) -> bool:
-    """
-    Verifică existența fișierelor obligatorii pentru un experiment FL.
-
-    Returns:
-        True dacă toate fișierele obligatorii există.
-    """
-    exp_dir = Path(EXPERIMENTS_DIR) / run_id
-    required_files = (
-        [exp_dir / "run_config.json", exp_dir / "central" / "metrics_by_round.csv"]
-        + [exp_dir / "nodes" / f"node{i}_metrics_by_round.csv" for i in range(1, len(NODES) + 1)]
-    )
-
-    missing = [str(f) for f in required_files if not f.exists()]
-    if missing:
-        for m in missing:
-            log(f"  ⚠ Lipsă: {m}", "WARNING")
-        return False
-    return True
-
-
-# ============================================================================
 # Single session runner
 # ============================================================================
 
-def run_session(session_num: int, session: Dict) -> Tuple[bool, str]:
-    """Run one complete FL session. Returns (success, run_id)."""
+def run_session(session_num: int, session: Dict) -> bool:
     label = session["label"]
-    strategy = session["aggregation_strategy"]
 
-    # NOU: generează run_id unic pentru această sesiune
-    run_id = _generate_run_id(strategy, MODEL_NAME)
+    log_banner(f"SESSION {session_num}/{len(SESSIONS)}: {label}")
 
-    log_banner(f"SESSION {session_num}/{len(SESSIONS)}: {label} (run_id: {run_id})")
-
-    # Start Flower Server for this session
-    if not start_flower_server(session, run_id=run_id):
+    if not start_flower_server(session):
         log(f"✗ Session {session_num} aborted — could not start Flower Server", "ERROR")
-        return False, run_id
+        return False
 
     log(f"  Waiting {SERVER_INIT_WAIT}s for server to initialize...")
     time.sleep(SERVER_INIT_WAIT)
 
-    # Start training on all nodes
     job_ids = start_training_all()
     if not job_ids:
         log(f"✗ Session {session_num} aborted — could not start training", "ERROR")
-        return False, run_id
+        return False
 
-    # Monitor until completion
     success = monitor_training(job_ids)
 
     if success:
@@ -519,7 +424,7 @@ def run_session(session_num: int, session: Dict) -> Tuple[bool, str]:
         log(f"✗ Session {session_num} ({label}) FAILED", "ERROR")
         force_stop_flower_server()
 
-    return success, run_id
+    return success
 
 
 # ============================================================================
@@ -528,18 +433,17 @@ def run_session(session_num: int, session: Dict) -> Tuple[bool, str]:
 
 def main() -> None:
     log_banner(
-        f"Fed-Med-FL — Sequential Multi-Strategy Training\n"
+        f"Fed-Med-FL — UI Dataset Mode\n"
         f"  Nodes:    {len(NODES)}\n"
         f"  Rounds:   {NUM_ROUNDS} per session\n"
         f"  Epochs:   {NUM_EPOCHS} per round\n"
         f"  Model:    {MODEL_NAME}\n"
         f"  Batch:    {BATCH_SIZE}\n"
-        f"  Sessions: {len(SESSIONS)}"
+        f"  Sessions: {len(SESSIONS)}\n"
+        f"  Dataset:  active dataset from UI (train/ val/ test/ folders)"
     )
     for i, s in enumerate(SESSIONS, 1):
         log(f"  {i}. {s['label']}")
-
-    # ── One-time setup ──────────────────────────────────────────────────────
 
     log("\n[SETUP 1] Checking services...")
     if not check_all_services():
@@ -551,46 +455,33 @@ def main() -> None:
         log("✗ Authentication failed. Exiting.", "ERROR")
         sys.exit(1)
 
-    log("\n[SETUP 3] Activating datasets...")
-    if not activate_all_datasets():
-        log("✗ Dataset activation failed. Exiting.", "ERROR")
+    log("\n[SETUP 3] Checking active datasets (set via UI)...")
+    if not check_active_datasets():
+        log("✗ One or more nodes have no active dataset. Register and activate datasets via the UI first.", "ERROR")
         sys.exit(1)
 
-    # ── Run sessions sequentially ───────────────────────────────────────────
-
-    results: Dict[str, Tuple[bool, str]] = {}
+    results: Dict[str, bool] = {}
 
     for i, session in enumerate(SESSIONS, 1):
-        # Ensure Flower Server is not running before starting a new session
         if i > 1:
             log(f"\nWaiting for Flower Server to stop before session {i}...")
             if not wait_for_flower_to_stop():
                 log("⚠ Server did not stop in time — force-stopping...", "WARNING")
                 force_stop_flower_server()
 
-        success, run_id = run_session(i, session)
-        results[session["label"]] = (success, run_id)
+        success = run_session(i, session)
+        results[session["label"]] = success
 
         if not success:
             log(f"\n⚠ Session {i} failed — continuing with remaining sessions", "WARNING")
 
-    # ── Final summary ───────────────────────────────────────────────────────
-
     log_banner("FINAL RESULTS")
     all_passed = True
-    for label, (passed, run_id) in results.items():
+    for label, passed in results.items():
         status = "✓ PASSED" if passed else "✗ FAILED"
-        log(f"  {status}  —  {label} ({run_id})")
+        log(f"  {status}  —  {label}")
         if not passed:
             all_passed = False
-
-    # NOU: Verificare fișiere output
-    log_banner("VERIFICARE FIȘIERE OUTPUT")
-    for label, (passed, run_id) in results.items():
-        if passed:
-            files_ok = verify_experiment_outputs(run_id)
-            file_status = "✓ FIȘIERE OK" if files_ok else "⚠ FIȘIERE LIPSĂ"
-            log(f"  {file_status}  —  {label} ({run_id})")
 
     log("")
     if all_passed:

@@ -43,7 +43,7 @@ class User(Base):
     id = Column(String, primary_key=True, default=generate_uuid)
     email = Column(String, unique=True, index=True, nullable=False)
     password_hash = Column(String, nullable=False)
-    role = Column(String, nullable=False, index=True)  # admin, doctor, researcher, viewer
+    role = Column(String, nullable=False, index=True)  # admin, doctor, viewer
     node_id = Column(String, nullable=False, index=True)  # node1, node2, node3
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=get_local_now, nullable=False)

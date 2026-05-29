@@ -17,10 +17,16 @@ import {
   Chip,
   IconButton,
   Tooltip,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Divider,
 } from '@mui/material';
 import {
   Refresh as RefreshIcon,
   CheckCircle as CheckCircleIcon,
+  Visibility as VisibilityIcon,
 } from '@mui/icons-material';
 import Layout from '@/components/Layout';
 import ProtectedRoute from '@/components/ProtectedRoute';
@@ -33,7 +39,12 @@ export default function ModelsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [promoting, setPromoting] = useState<string | null>(null);
-  const { token } = useAuth();
+  const [metricsModel, setMetricsModel] = useState<Model | null>(null);
+  const { token, user } = useAuth();
+  const isViewer = user?.role === 'viewer';
+
+  const fmt = (v: number | undefined | null) =>
+    v != null ? (v * 100).toFixed(2) + '%' : 'N/A';
 
   useEffect(() => {
     if (token) {
@@ -155,10 +166,10 @@ export default function ModelsPage() {
               {/* Column 2 */}
               <Box>
                 <Typography variant="body2" color="text.secondary" gutterBottom sx={{ fontSize: '1.1rem', fontWeight: 'bold' }}>
-                  Version
+                  Session ID
                 </Typography>
                 <Typography variant="body1" sx={{ mb: 2 }}>
-                  {activeModel.version}
+                  {activeModel.session_id || '-'}
                 </Typography>
                 
                 <Typography variant="body2" color="text.secondary" gutterBottom sx={{ fontSize: '1.1rem', fontWeight: 'bold' }}>
@@ -215,10 +226,9 @@ export default function ModelsPage() {
                 <TableRow>
                   <TableCell>Model ID</TableCell>
                   <TableCell>Architecture</TableCell>
-                  <TableCell>Version</TableCell>
                   <TableCell>Labels</TableCell>
-                  <TableCell>Session</TableCell>
-                  <TableCell>Accuracy</TableCell>
+                  <TableCell>Session ID</TableCell>
+                  <TableCell align="center">Metrics</TableCell>
                   <TableCell>Created At</TableCell>
                   <TableCell align="center">Actions</TableCell>
                 </TableRow>
@@ -226,7 +236,7 @@ export default function ModelsPage() {
               <TableBody>
                 {models.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} align="center">
+                    <TableCell colSpan={7} align="center">
                       <Typography variant="body2" color="text.secondary">
                         No models found. Train a model to get started.
                       </Typography>
@@ -243,7 +253,6 @@ export default function ModelsPage() {
                         </Typography>
                       </TableCell>
                       <TableCell>{model.model_name}</TableCell>
-                      <TableCell>{model.version}</TableCell>
                       <TableCell>
                         <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
                           {(model.labels || []).map((label) => (
@@ -258,29 +267,38 @@ export default function ModelsPage() {
                       </TableCell>
                       <TableCell>
                         {model.session_id || '-'}
-                      </TableCell>                      <TableCell>
-                        {model.metrics?.accuracy 
-                          ? (model.metrics.accuracy * 100).toFixed(2) + '%'
-                          : '-'}
+                      </TableCell>
+                      <TableCell align="center">
+                        <Tooltip title="View metrics">
+                          <IconButton
+                            size="small"
+                            onClick={() => setMetricsModel(model)}
+                            disabled={!model.metrics}
+                          >
+                            <VisibilityIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
                       </TableCell>
                       <TableCell>
                         {new Date(model.created_at).toLocaleString()}
                       </TableCell>
                       <TableCell align="center">
                         {!model.labels?.includes('active') && (
-                          <Tooltip title="Promote to Active">
-                            <IconButton
-                              size="small"
-                              color="primary"
-                              onClick={() => handlePromote(model.model_id)}
-                              disabled={promoting === model.model_id}
-                            >
-                              {promoting === model.model_id ? (
-                                <CircularProgress size={20} />
-                              ) : (
-                                <CheckCircleIcon />
-                              )}
-                            </IconButton>
+                          <Tooltip title={isViewer ? 'Insufficient permissions' : 'Promote to Active'}>
+                            <span>
+                              <IconButton
+                                size="small"
+                                color="primary"
+                                onClick={() => handlePromote(model.model_id)}
+                                disabled={promoting === model.model_id || isViewer}
+                              >
+                                {promoting === model.model_id ? (
+                                  <CircularProgress size={20} />
+                                ) : (
+                                  <CheckCircleIcon />
+                                )}
+                              </IconButton>
+                            </span>
                           </Tooltip>
                         )}
                         {model.labels?.includes('active') && (
@@ -319,6 +337,43 @@ export default function ModelsPage() {
             </Typography>
           </Box>
         </Paper>
+        {/* Metrics Dialog */}
+        <Dialog open={!!metricsModel} onClose={() => setMetricsModel(null)} maxWidth="xs" fullWidth>
+          <DialogTitle>
+            Model Metrics
+            <Typography variant="body2" color="text.secondary" sx={{ fontFamily: 'monospace', fontSize: '0.75rem', mt: 0.5 }}>
+              {metricsModel?.model_id}
+            </Typography>
+          </DialogTitle>
+          <DialogContent>
+            <Divider sx={{ mb: 2 }} />
+            {metricsModel?.metrics ? (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+                {[
+                  { label: 'Accuracy',    key: 'accuracy',         fallback: null },
+                  { label: 'Precision',   key: 'precision',        fallback: null },
+                  { label: 'Sensitivity', key: 'val_sensitivity',  fallback: 'recall' },
+                  { label: 'Specificity', key: 'val_specificity',  fallback: null },
+                  { label: 'F1 Score',    key: 'f1_score',         fallback: 'f1' },
+                  { label: 'AUC',         key: 'auc',              fallback: 'val_auc' },
+                ].map(({ label, key, fallback }) => (
+                  <Box key={key} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Typography variant="body2" color="text.secondary">{label}</Typography>
+                    <Typography variant="body2" fontWeight="bold">
+                      {fmt(metricsModel.metrics?.[key] ?? (fallback ? metricsModel.metrics?.[fallback] : null))}
+                    </Typography>
+                  </Box>
+                ))}
+              </Box>
+            ) : (
+              <Typography variant="body2" color="text.secondary">No metrics available.</Typography>
+            )}
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setMetricsModel(null)}>Close</Button>
+          </DialogActions>
+        </Dialog>
+
       </Container>
     </Layout>
     </ProtectedRoute>

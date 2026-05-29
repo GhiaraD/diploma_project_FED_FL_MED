@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import {
   Box,
+  Container,
   Typography,
   Paper,
   Table,
@@ -41,6 +42,7 @@ export default function JobsPage() {
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [logsDialogOpen, setLogsDialogOpen] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -116,6 +118,15 @@ export default function JobsPage() {
     }
   };
 
+  // Format job type for display
+  const formatJobType = (jobType: string) => {
+    switch (jobType) {
+      case 'infer': return 'Inference';
+      case 'federated_train': return 'Federated Training';
+      default: return jobType;
+    }
+  };
+
   // Format duration
   const formatDuration = (seconds: number | null) => {
     if (!seconds) return '-';
@@ -139,11 +150,11 @@ export default function JobsPage() {
 
   return (
     <ProtectedRoute>
-      <Layout title="Jobs & Management">
-      <Box>
+      <Layout title="Jobs">
+      <Container maxWidth="xl">
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
           <Typography variant="h4" component="h1">
-            Jobs & Management
+            Jobs
           </Typography>
           <Box sx={{ display: 'flex', gap: 2 }}>
             <Button
@@ -169,6 +180,14 @@ export default function JobsPage() {
         <Paper sx={{ p: 2, mb: 2 }}>
           <Box sx={{ display: 'flex', gap: 2 }}>
             <TextField
+              label="Search by Job ID"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              size="small"
+              sx={{ minWidth: 260 }}
+              placeholder="e.g. federated_abc123..."
+            />
+            <TextField
               select
               label="Status"
               value={statusFilter}
@@ -192,9 +211,8 @@ export default function JobsPage() {
               sx={{ minWidth: 150 }}
             >
               <MenuItem value="all">All Types</MenuItem>
-              <MenuItem value="train">Train</MenuItem>
               <MenuItem value="infer">Inference</MenuItem>
-              <MenuItem value="federated_train">Federated</MenuItem>
+              <MenuItem value="federated_train">Federated Training</MenuItem>
             </TextField>
           </Box>
         </Paper>
@@ -219,25 +237,29 @@ export default function JobsPage() {
                     <CircularProgress />
                   </TableCell>
                 </TableRow>
-              ) : jobs.length === 0 ? (
+              ) : jobs.filter((job) => searchQuery === '' || job.job_id.toLowerCase().includes(searchQuery.toLowerCase())).length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={6} align="center">
-                    No jobs found
+                    {searchQuery ? `No jobs found matching "${searchQuery}"` : 'No jobs found'}
                   </TableCell>
                 </TableRow>
               ) : (
-                jobs.map((job) => (
+                jobs
+                  .filter((job) =>
+                    searchQuery === '' || job.job_id.toLowerCase().includes(searchQuery.toLowerCase())
+                  )
+                  .map((job) => (
                   <TableRow key={job.job_id} hover>
                     <TableCell>
                       <Tooltip title={job.job_id}>
-                        <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-                          {job.job_id.substring(0, 20)}...
+                        <Typography variant="body2" sx={{ fontFamily: 'monospace', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {job.job_id}
                         </Typography>
                       </Tooltip>
                     </TableCell>
                     <TableCell>
                       <Chip
-                        label={job.job_type}
+                        label={formatJobType(job.job_type)}
                         size="small"
                         variant="outlined"
                       />
@@ -261,7 +283,7 @@ export default function JobsPage() {
                       </IconButton>
                     </TableCell>
                   </TableRow>
-                ))
+                  ))
               )}
             </TableBody>
           </Table>
@@ -289,7 +311,7 @@ export default function JobsPage() {
               <>
                 <Box sx={{ mb: 2 }}>
                   <Typography variant="body2" color="text.secondary">
-                    <strong>Type:</strong> {selectedJob.job_type} | 
+                    <strong>Type:</strong> {formatJobType(selectedJob.job_type)} | 
                     <strong> Status:</strong> <Chip label={selectedJob.status} color={getStatusColor(selectedJob.status)} size="small" sx={{ ml: 1 }} />
                   </Typography>
                 </Box>
@@ -308,7 +330,7 @@ export default function JobsPage() {
             <Button onClick={handleCloseLogs}>Close</Button>
           </DialogActions>
         </Dialog>
-      </Box>
+      </Container>
     </Layout>
     </ProtectedRoute>
   );

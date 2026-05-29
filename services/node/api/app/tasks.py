@@ -13,7 +13,6 @@ sys.path.insert(0, '/app/shared/python/node_core')
 from node_core import (
     get_model, load_model, save_model,
     load_dataset, create_dataloaders,
-    train_model, get_optimizer, get_scheduler, EarlyStopping,
     predict_batch, GradCAM, get_final_conv_layer,
     save_gradcam_overlay, compute_metrics,
     compute_model_hash
@@ -69,181 +68,6 @@ def update_job_status(job_id: str, status: str, result=None, error=None):
             db.commit()
     finally:
         db.close()
-
-
-@celery_app.task(name="train_local_model")
-def train_local_model_task(
-    job_id: str,
-    dataset_id: str,
-    model_name: str = "resnet18",
-    num_epochs: int = 10,
-    batch_size: int = 32,
-    learning_rate: float = 0.001
-):
-    """
-    Train a model locally on node dataset.
-    
-    Args:
-        job_id: Job identifier
-        dataset_id: Dataset identifier
-        model_name: Model architecture
-        num_epochs: Number of training epochs
-        batch_size: Batch size
-        learning_rate: Learning rate
-    """
-    model = None
-    try:
-        update_job_status(job_id, "running")
-        
-        # Get dataset path
-        db = SessionLocal()
-        from .database import Dataset
-        dataset = db.query(Dataset).filter(Dataset.dataset_id == dataset_id).first()
-        db.close()
-        
-        if not dataset:
-            raise ValueError(f"Dataset {dataset_id} not found")
-        
-        dataset_path = dataset.path
-        
-        # Load datasets
-        _log.info(f"Loading dataset from {dataset_path}...")
-        train_dataset = load_dataset(dataset_path, split='train')
-        
-        # Create validation split if needed
-        from torch.utils.data import random_split
-        train_size = int(0.8 * len(train_dataset))
-        val_size = len(train_dataset) - train_size
-        train_dataset, val_dataset = random_split(train_dataset, [train_size, val_size])
-        
-        # Create data loaders (num_workers=0 for Celery compatibility)
-        train_loader, val_loader = create_dataloaders(
-            train_dataset, val_dataset,
-            batch_size=batch_size,
-            num_workers=0
-        )
-        
-        # Initialize model
-        _log.info(f"Initializing {model_name}...")
-        model = get_model(model_name, num_classes=2, pretrained=True)
-        model = model.to(settings.DEVICE)
-        
-        # Setup training
-        criterion = torch.nn.CrossEntropyLoss()
-        optimizer = get_optimizer(model, 'adam', lr=learning_rate)
-        scheduler = get_scheduler(optimizer, 'cosine', num_epochs=num_epochs)
-        early_stopping = EarlyStopping(patience=5, mode='max')
-        
-        # Train
-        _log.info("Starting training...")
-        history = train_model(
-            model=model,
-            train_loader=train_loader,
-            val_loader=val_loader,
-            criterion=criterion,
-            optimizer=optimizer,
-            device=settings.DEVICE,
-            num_epochs=num_epochs,
-            scheduler=scheduler,
-            early_stopping=early_stopping,
-            verbose=True
-        )
-        
-        # Compute comprehensive metrics on validation set
-        _log.info("Computing final metrics...")
-        model.eval()
-        y_true = []
-        y_pred = []
-        y_probs = []
-        
-        with torch.no_grad():
-            for inputs, labels in val_loader:
-                inputs = inputs.to(settings.DEVICE)
-                outputs = model(inputs)
-                probs = torch.softmax(outputs, dim=1)
-                _, predicted = torch.max(outputs, 1)
-                
-                y_true.extend(labels.cpu().numpy().tolist())
-                y_pred.extend(predicted.cpu().numpy().tolist())
-                y_probs.extend(probs[:, 1].cpu().numpy().tolist())  # Probability of positive class
-        
-        # Compute all metrics
-        final_metrics = compute_metrics(y_true, y_pred, y_probs)
-        
-        # Save model as candidate
-        model_id = f"{model_name}_local_{uuid.uuid4().hex[:8]}"
-        model_path = os.path.join(settings.MODELS_CANDIDATE_DIR, f"{model_id}.pt")
-        
-        metadata = {
-            'model_name': model_name,
-            'epochs': history['epochs_trained'],
-            'best_val_acc': history['best_val_acc'],
-            'history': history,
-            'final_metrics': final_metrics
-        }
-        
-        save_model(model, model_path, metadata)
-        
-        # Prepare metrics for database (only scalar values)
-        db_metrics = {
-            'accuracy': final_metrics['accuracy'],
-            'f1': final_metrics['f1'],
-            'precision': final_metrics['precision'],
-            'recall': final_metrics['recall'],
-            'auc': final_metrics.get('auc'),
-            'sensitivity': final_metrics.get('sensitivity'),
-            'specificity': final_metrics.get('specificity'),
-            'train_loss': history['train_loss'][-1],
-            'val_loss': history['val_loss'][-1]
-        }
-        
-        _log.info("Final Metrics:")
-        _log.step(f"Accuracy: {db_metrics['accuracy']:.4f}")
-        _log.step(f"F1 Score: {db_metrics['f1']:.4f}")
-        _log.step(f"Precision: {db_metrics['precision']:.4f}")
-        _log.step(f"Recall: {db_metrics['recall']:.4f}")
-        if db_metrics['auc']:
-            _log.step(f"AUC: {db_metrics['auc']:.4f}")
-        _log.step(f"Sensitivity: {db_metrics['sensitivity']:.4f}")
-        _log.step(f"Specificity: {db_metrics['specificity']:.4f}")
-        
-        # Save to database
-        db = SessionLocal()
-        model_record = Model(
-            model_id=model_id,
-            model_name=model_name,
-            version="local",
-            type="candidate",
-            file_path=model_path,
-            metrics=db_metrics
-        )
-        db.add(model_record)
-        db.commit()
-        db.close()
-        
-        result = {
-            'model_id': model_id,
-            'model_path': model_path,
-            'metrics': metadata
-        }
-        
-        update_job_status(job_id, "completed", result=result)
-        
-        _log.ok(f"Training completed: {model_id}")
-
-        return result
-
-    except Exception as e:
-        _log.fail(f"Training failed: {e}")
-        update_job_status(job_id, "failed", error=str(e))
-        raise
-    finally:
-        # Release GPU memory
-        if model is not None:
-            model.cpu()
-            del model
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
 
 
 @celery_app.task(name="run_inference")
@@ -371,11 +195,16 @@ def run_inference_task(
             })
         
         db.commit()
+
+        # Read attributes before closing the session to avoid DetachedInstanceError
+        _model_id = model_record.model_id
+        _model_name = model_record.model_name
+
         db.close()
 
         job_log.ok("Results saved to database")
 
-        result = {'num_images': len(image_paths), 'results': results}
+        result = {'num_images': len(image_paths), 'results': results, 'model_id': _model_id, 'model_name': _model_name}
         update_job_status(job_id, "completed", result=result)
 
         job_log.ok(f"Inference job completed — {len(image_paths)} image(s) processed")
@@ -449,7 +278,9 @@ def federated_training_task(
         update_job_status(job_id, "running")
         
         # Rezolvă splits_dir la cale absolută (dacă e relativ, prefixăm cu /)
-        effective_splits_dir = splits_dir or os.getenv("SPLITS_DIR", None)
+        # Env var SPLITS_DIR este ignorat — caller decide explicit prin parametru.
+        # Dacă splits_dir e None, se folosesc folderele train/val/test din dataset (calea UI).
+        effective_splits_dir = splits_dir
         if effective_splits_dir and not os.path.isabs(effective_splits_dir):
             effective_splits_dir = "/" + effective_splits_dir
         

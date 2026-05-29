@@ -374,3 +374,100 @@ services:
       - "3003:3000"
     depends_on:
       - node3-api
+
+  # ===== Node 4 =====
+  node4-api:
+    build:
+      context: .
+      dockerfile: ./services/node/api/Dockerfile
+    environment:
+      NODE_ID: node4
+      STORAGE_ROOT: /storage
+      CENTRAL_URL: http://central:8081
+      REDIS_URL: redis://node4-redis:6379/0
+      DEVICE: cuda
+      TZ: ${TZ:-UTC}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-fed-med-fl-secret-key-2026-change-in-production}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-1440}
+      REDIS_HOST: node4-redis
+      REDIS_PORT: 6379
+      REDIS_SECURITY_DB: 1
+      RATE_LIMIT_ENABLED: "true"
+      API_KEY_EXPIRE_DAYS: 365
+      AUDIT_LOG_LEVEL: INFO
+      AUDIT_LOG_RETENTION_DAYS: 2555
+      ENABLE_SSL: "false"
+      CERTIFICATES_PATH: /certificates
+    volumes:
+      - ./storage/node4:/storage
+      - ./certificates:/certificates:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    ports:
+      - "8004:8000"
+    depends_on:
+      - central
+      - node4-redis
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  node4-worker:
+    build:
+      context: .
+      dockerfile: ./services/node/worker/Dockerfile
+    environment:
+      NODE_ID: node4
+      STORAGE_ROOT: /storage
+      CENTRAL_URL: http://central:8081
+      FLOWER_SERVER: central:8080
+      REDIS_URL: redis://node4-redis:6379/0
+      DEVICE: cuda
+      TZ: ${TZ:-UTC}
+      ENABLE_SSL: "true"
+      CERTIFICATES_PATH: /certificates
+      ENABLE_DP: "false"
+      DP_TARGET_EPSILON: "10.0"
+      DP_TARGET_DELTA: "1e-5"
+      DP_NOISE_MULTIPLIER: "0.5"
+      DP_MAX_GRAD_NORM: "1.0"
+      DP_MAX_EPOCHS: "10"
+      SPLITS_DIR: /experiments/splits
+    volumes:
+      - ./storage/node4:/storage
+      - ./certificates:/certificates:ro
+      - ./central_dataset:/central_dataset:ro
+      - ./experiments:/experiments:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    depends_on:
+      - node4-redis
+      - node4-api
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  node4-redis:
+    image: redis:7
+    ports:
+      - "63794:6379"
+
+  node4-ui:
+    build:
+      context: ./services/node/ui
+      dockerfile: Dockerfile
+    environment:
+      NEXT_PUBLIC_API_BASE: http://localhost:8004
+    ports:
+      - "3004:3000"
+    depends_on:
+      - node4-api

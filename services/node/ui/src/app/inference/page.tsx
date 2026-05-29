@@ -28,6 +28,7 @@ import {
   TableHead,
   TableRow,
   TablePagination,
+  Tooltip,
 } from '@mui/material';
 import { 
   Psychology as PsychologyIcon, 
@@ -38,6 +39,7 @@ import {
   NavigateNext as NavigateNextIcon,
   Visibility as VisibilityIcon,
   VisibilityOff as VisibilityOffIcon,
+  ArrowUpward as ArrowUpwardIcon,
 } from '@mui/icons-material';
 import Layout from '@/components/Layout';
 import ProtectedRoute from '@/components/ProtectedRoute';
@@ -269,7 +271,8 @@ const FileItem = memo(function FileItem({ file, selected, onToggle }: FileItemPr
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function InferencePage() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
+  const isViewer = user?.role === 'viewer';
   const [currentDir, setCurrentDir] = useState('/storage/datasets');
   const [files, setFiles] = useState<any[]>([]);
   const [subdirs, setSubdirs] = useState<any[]>([]);
@@ -397,7 +400,9 @@ export default function InferencePage() {
       setFilesTotalTruncated(data.truncated || false);
       setCurrentDir(directory);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to browse directory');
+      if (!isViewer) {
+        setError(err instanceof Error ? err.message : 'Failed to browse directory');
+      }
     } finally {
       setBrowsing(false);
     }
@@ -659,19 +664,36 @@ export default function InferencePage() {
                 </Button>
               </Box>
 
-              <TextField
-                fullWidth
-                size="small"
-                label="Current Directory"
-                value={currentDir}
-                onChange={(e) => setCurrentDir(e.target.value)}
-                onKeyPress={(e) => {
-                  if (e.key === 'Enter') {
-                    browseDirectory(currentDir);
-                  }
-                }}
-                sx={{ mb: 2 }}
-              />
+              <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="Current Directory"
+                  value={currentDir}
+                  onChange={(e) => setCurrentDir(e.target.value)}
+                  onKeyPress={(e) => {
+                    if (e.key === 'Enter') {
+                      browseDirectory(currentDir);
+                    }
+                  }}
+                />
+                <Tooltip title="Go to parent directory">
+                  <span>
+                    <IconButton
+                      size="small"
+                      onClick={() => {
+                        const parent = currentDir.includes('/')
+                          ? currentDir.substring(0, currentDir.lastIndexOf('/')) || '/'
+                          : '/';
+                        browseDirectory(parent);
+                      }}
+                      disabled={currentDir === '/' || browsing}
+                    >
+                      <ArrowUpwardIcon />
+                    </IconButton>
+                  </span>
+                </Tooltip>
+              </Box>
 
               {browsing ? (
                 <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
@@ -743,10 +765,10 @@ export default function InferencePage() {
                   size="large"
                   startIcon={<PsychologyIcon />}
                   onClick={handleInference}
-                  disabled={selectedPaths.size === 0 || loading}
+                  disabled={selectedPaths.size === 0 || loading || isViewer}
                   fullWidth
                 >
-                  {loading ? <CircularProgress size={24} /> : 'Run Inference'}
+                  {loading ? <CircularProgress size={24} /> : isViewer ? 'Run Inference (No Permission)' : 'Run Inference'}
                 </Button>
               </Box>
             </Paper>
@@ -970,6 +992,7 @@ export default function InferencePage() {
                     <TableRow>
                       <TableCell>Job ID</TableCell>
                       <TableCell>Status</TableCell>
+                      <TableCell>Model</TableCell>
                       <TableCell>Created At</TableCell>
                       <TableCell>Images</TableCell>
                       <TableCell>Duration</TableCell>
@@ -996,6 +1019,13 @@ export default function InferencePage() {
                             color={getStatusColor(job.status)}
                             size="small"
                           />
+                        </TableCell>
+                        <TableCell>
+                          <Tooltip title={job.result?.model_id || job.params?.model_id || 'Unknown'}>
+                            <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.75rem', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {job.result?.model_id || job.params?.model_id || '-'}
+                            </Typography>
+                          </Tooltip>
                         </TableCell>
                         <TableCell>
                           <Typography variant="body2">

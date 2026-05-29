@@ -19,7 +19,7 @@ from .database import get_db, Model, Job, Dataset, InferenceResult
 from .schemas import (
     ModelInfo, ModelPromoteRequest, ModelListResponse,
     JobInfo, JobCreateResponse,
-    TrainRequest, InferRequest, InferResponse,
+    InferRequest, InferResponse,
     FederatedStatusResponse,
     DatasetInfo, DatasetUploadResponse, DatasetRegisterRequest,
     HealthResponse, NodeStatusResponse
@@ -47,7 +47,9 @@ app.add_middleware(
         "http://localhost:3001",
         "http://localhost:3002", 
         "http://localhost:3003",
-        "http://localhost:3000",  # Dev mode
+        "http://localhost:3000",
+        "http://localhost:3004",
+          # Dev mode
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -201,46 +203,31 @@ def browse_filesystem(
             item_path = os.path.join(directory, item)
             
             if os.path.isdir(item_path):
-                # Check if it looks like a dataset (has NORMAL/PNEUMONIA folders)
-                # Support both direct structure and split-based structure
-                is_dataset = False
-                normal_path = None
-                pneumonia_path = None
-                
-                # Check direct structure: dataset/NORMAL, dataset/PNEUMONIA
-                if (os.path.exists(os.path.join(item_path, "NORMAL")) and
-                    os.path.exists(os.path.join(item_path, "PNEUMONIA"))):
-                    is_dataset = True
-                    normal_path = os.path.join(item_path, "NORMAL")
-                    pneumonia_path = os.path.join(item_path, "PNEUMONIA")
-                
-                # Check split-based structure: dataset/train/NORMAL, dataset/train/PNEUMONIA
-                elif (os.path.exists(os.path.join(item_path, "train", "NORMAL")) and
-                      os.path.exists(os.path.join(item_path, "train", "PNEUMONIA"))):
-                    is_dataset = True
-                    normal_path = os.path.join(item_path, "train", "NORMAL")
-                    pneumonia_path = os.path.join(item_path, "train", "PNEUMONIA")
-                
-                # Check other common splits: val, test
-                elif (os.path.exists(os.path.join(item_path, "val", "NORMAL")) and
-                      os.path.exists(os.path.join(item_path, "val", "PNEUMONIA"))):
-                    is_dataset = True
-                    normal_path = os.path.join(item_path, "val", "NORMAL")
-                    pneumonia_path = os.path.join(item_path, "val", "PNEUMONIA")
-                elif (os.path.exists(os.path.join(item_path, "test", "NORMAL")) and
-                      os.path.exists(os.path.join(item_path, "test", "PNEUMONIA"))):
-                    is_dataset = True
-                    normal_path = os.path.join(item_path, "test", "NORMAL")
-                    pneumonia_path = os.path.join(item_path, "test", "PNEUMONIA")
-                
-                # Count samples if it's a dataset
+                # A valid dataset must have all three splits: train, val, test
+                # each containing NORMAL and PNEUMONIA subfolders
+                def _split_valid(base, split):
+                    return (
+                        os.path.exists(os.path.join(base, split, "NORMAL")) and
+                        os.path.exists(os.path.join(base, split, "PNEUMONIA"))
+                    )
+
+                is_dataset = (
+                    _split_valid(item_path, "train") and
+                    _split_valid(item_path, "val") and
+                    _split_valid(item_path, "test")
+                )
+
+                # Count samples across all splits if it's a valid dataset
                 num_samples = 0
                 num_normal = 0
                 num_pneumonia = 0
-                
-                if is_dataset and normal_path and pneumonia_path:
-                    num_normal = len([f for f in os.listdir(normal_path) if os.path.isfile(os.path.join(normal_path, f))])
-                    num_pneumonia = len([f for f in os.listdir(pneumonia_path) if os.path.isfile(os.path.join(pneumonia_path, f))])
+
+                if is_dataset:
+                    for split in ("train", "val", "test"):
+                        n_path = os.path.join(item_path, split, "NORMAL")
+                        p_path = os.path.join(item_path, split, "PNEUMONIA")
+                        num_normal += len([f for f in os.listdir(n_path) if os.path.isfile(os.path.join(n_path, f))])
+                        num_pneumonia += len([f for f in os.listdir(p_path) if os.path.isfile(os.path.join(p_path, f))])
                     num_samples = num_normal + num_pneumonia
                 
                 subdirs.append({
@@ -301,7 +288,7 @@ async def register_dataset(
     start_time = time.time()
     
     # Log the incoming request data for debugging
-    logger.info(f"Dataset register request: path={request_data.path}, name={request_data.name}, split={request_data.split}")
+    logger.info(f"Dataset register request: path={request_data.path}, name={request_data.name}")
     
     # Validate path exists
     if not os.path.exists(request_data.path):
@@ -318,37 +305,25 @@ async def register_dataset(
             detail=f"Path is not a directory: {request_data.path}"
         )
     
-    # Validate dataset structure (must have split/NORMAL and split/PNEUMONIA folders)
-    # The path should be the base directory, and we check for {path}/{split}/NORMAL and {path}/{split}/PNEUMONIA
-    split_path = os.path.join(request_data.path, request_data.split)
+    # Validate dataset structure: must have train/val/test, each with NORMAL and PNEUMONIA
+    for split in ("train", "val", "test"):
+        for cls in ("NORMAL", "PNEUMONIA"):
+            cls_path = os.path.join(request_data.path, split, cls)
+            if not os.path.exists(cls_path):
+                logger.error(f"Missing folder: {cls_path}")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Dataset must contain {split}/{cls} folder at {cls_path}"
+                )
     
-    if not os.path.exists(split_path):
-        logger.error(f"Split directory not found: {split_path}")
-        raise HTTPException(
-            status_code=400,
-            detail=f"Split directory not found: {split_path}"
-        )
-    
-    normal_path = os.path.join(split_path, "NORMAL")
-    pneumonia_path = os.path.join(split_path, "PNEUMONIA")
-    
-    if not os.path.exists(normal_path):
-        logger.error(f"NORMAL folder not found at: {normal_path}")
-        raise HTTPException(
-            status_code=400,
-            detail=f"Dataset must contain NORMAL folder at {normal_path}"
-        )
-    
-    if not os.path.exists(pneumonia_path):
-        logger.error(f"PNEUMONIA folder not found at: {pneumonia_path}")
-        raise HTTPException(
-            status_code=400,
-            detail=f"Dataset must contain PNEUMONIA folder at {pneumonia_path}"
-        )
-    
-    # Count samples
-    num_normal = len([f for f in os.listdir(normal_path) if os.path.isfile(os.path.join(normal_path, f))])
-    num_pneumonia = len([f for f in os.listdir(pneumonia_path) if os.path.isfile(os.path.join(pneumonia_path, f))])
+    # Count samples across all splits
+    num_normal = 0
+    num_pneumonia = 0
+    for split in ("train", "val", "test"):
+        n_path = os.path.join(request_data.path, split, "NORMAL")
+        p_path = os.path.join(request_data.path, split, "PNEUMONIA")
+        num_normal += len([f for f in os.listdir(n_path) if os.path.isfile(os.path.join(n_path, f))])
+        num_pneumonia += len([f for f in os.listdir(p_path) if os.path.isfile(os.path.join(p_path, f))])
     num_samples = num_normal + num_pneumonia
     
     # Check if dataset already registered
@@ -360,14 +335,14 @@ async def register_dataset(
         )
     
     # Generate dataset ID
-    dataset_id = f"dataset_{request_data.split}_{uuid.uuid4().hex[:8]}"
+    dataset_id = f"dataset_{uuid.uuid4().hex[:8]}"
     
     # Save to database
     dataset = Dataset(
         dataset_id=dataset_id,
         name=request_data.name,
         path=request_data.path,
-        split=request_data.split,
+        split="all",
         num_samples=num_samples,
         num_normal=num_normal,
         num_pneumonia=num_pneumonia
@@ -385,7 +360,6 @@ async def register_dataset(
         dataset_id=dataset_id,
         dataset_name=request_data.name,
         details={
-            "split": request_data.split,
             "num_samples": num_samples,
             "num_normal": num_normal,
             "num_pneumonia": num_pneumonia
@@ -398,7 +372,7 @@ async def register_dataset(
         "dataset_id": dataset_id,
         "name": request_data.name,
         "path": request_data.path,
-        "split": request_data.split,
+        "split": "all",
         "num_samples": num_samples,
         "num_normal": num_normal,
         "num_pneumonia": num_pneumonia,
@@ -785,97 +759,6 @@ def get_model_info(
         "file_path": model.file_path,
         "metrics": model.metrics,
         "created_at": model.created_at.isoformat()
-    }
-
-
-# ============================================================================
-# Training Endpoints
-# ============================================================================
-
-@app.post("/api/train/local", response_model=JobCreateResponse)
-async def start_local_training(
-    request_data: TrainRequest,
-    request: Request,
-    background_tasks: BackgroundTasks,
-    current_user: dict = Depends(require_permission("write:training")),
-    db: Session = Depends(get_db)
-):
-    """
-    Start local training job.
-    
-    Creates a Celery task for training.
-    """
-    start_time = time.time()
-    from .tasks import train_local_model_task
-    
-    # Create job record
-    job_id = f"train_{uuid.uuid4().hex[:8]}"
-    
-    job = Job(
-        job_id=job_id,
-        job_type="train",
-        status="pending",
-        params=request_data.dict()
-    )
-    db.add(job)
-    db.commit()
-    
-    # Log training start
-    await log_training_action(
-        action="started",
-        user_id=current_user["id"],
-        request=request,
-        db=db,
-        job_id=job_id,
-        model_name=request_data.model_name,
-        training_type="local",
-        details={
-            "dataset_id": request_data.dataset_id,
-            "num_epochs": request_data.num_epochs,
-            "batch_size": request_data.batch_size,
-            "learning_rate": request_data.learning_rate
-        },
-        response_status=200,
-        start_time=start_time
-    )
-    
-    # Start Celery task
-    task = train_local_model_task.delay(
-        job_id=job_id,
-        dataset_id=request_data.dataset_id,
-        model_name=request_data.model_name,
-        num_epochs=request_data.num_epochs,
-        batch_size=request_data.batch_size,
-        learning_rate=request_data.learning_rate
-    )
-    
-    return {
-        "job_id": job_id,
-        "task_id": task.id,
-        "status": "pending"
-    }
-
-
-@app.get("/api/train/status/{job_id}")
-def get_training_status(
-    job_id: str,
-    current_user: dict = Depends(require_permission("read:jobs")),
-    db: Session = Depends(get_db)
-):
-    """Get training job status."""
-    job = db.query(Job).filter(Job.job_id == job_id).first()
-    
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    
-    return {
-        "job_id": job.job_id,
-        "status": job.status,
-        "params": job.params,
-        "result": job.result,
-        "error": job.error,
-        "created_at": job.created_at.isoformat(),
-        "completed_at": job.completed_at.isoformat() if job.completed_at else None
     }
 
 

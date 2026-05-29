@@ -74,7 +74,7 @@ def client_with_mock_loaders(tiny_model):
 
     with patch.object(fc, "get_model", return_value=tiny_model):
         with patch.object(fc, "create_payload_signer", return_value=MagicMock(is_ready=lambda: False)):
-            with patch.object(FedMedClient, "_load_data", return_value=(mock_train_loader, mock_val_loader)):
+            with patch.object(FedMedClient, "_load_data", return_value=(mock_train_loader, mock_val_loader, None)):
                 c = FedMedClient(
                     node_id="node1",
                     model_name="efficientnet_b0",
@@ -287,7 +287,7 @@ class TestComputeDeltaNorm:
         tiny = _make_tiny_model()
         with patch.object(fc, "get_model", return_value=tiny):
             with patch.object(fc, "create_payload_signer", return_value=MagicMock(is_ready=lambda: False)):
-                with patch.object(FedMedClient, "_load_data", return_value=(mock_loader, mock_loader)):
+                with patch.object(FedMedClient, "_load_data", return_value=(mock_loader, mock_loader, None)):
                     c = FedMedClient(
                         node_id="node1", model_name="efficientnet_b0",
                         num_classes=2, dataset_path="/fake",
@@ -440,27 +440,20 @@ class TestLoadData:
         assert "prepare_experiment_data" in str(exc_info.value)
 
     def test_fallback_used_when_splits_dir_is_none(self, tmp_path):
-        """Când splits_dir=None, se folosește load_dataset (fallback 80/20)."""
+        """Când splits_dir=None, se folosesc folderele train/, val/, test/ din dataset."""
         mock_dataset = MagicMock()
         mock_dataset.__len__ = MagicMock(return_value=100)
 
-        mock_train = MagicMock()
-        mock_train.__len__ = MagicMock(return_value=80)
-        mock_val = MagicMock()
-        mock_val.__len__ = MagicMock(return_value=20)
-
         mock_train_loader = MagicMock()
-        mock_train_loader.dataset = mock_train
+        mock_train_loader.dataset = mock_dataset
         mock_val_loader = MagicMock()
-        mock_val_loader.dataset = mock_val
+        mock_val_loader.dataset = mock_dataset
 
-        # load_dataset e importat în flower_client ca `from node_core import load_dataset`
-        # deci trebuie patch-uit pe modulul fc, nu pe node_core
         with patch.object(fc, "get_model", return_value=_make_tiny_model()):
             with patch.object(fc, "create_payload_signer", return_value=MagicMock(is_ready=lambda: False)):
                 with patch.object(fc, "load_dataset", return_value=mock_dataset) as mock_ld:
-                    with patch("torch.utils.data.random_split", return_value=(mock_train, mock_val)):
-                        with patch.object(fc, "create_dataloaders", return_value=(mock_train_loader, mock_val_loader)):
+                    with patch.object(fc, "create_dataloaders", return_value=(mock_train_loader, mock_val_loader)):
+                        with patch("torch.utils.data.DataLoader", return_value=mock_train_loader):
                             FedMedClient(
                                 node_id="node1",
                                 model_name="efficientnet_b0",
@@ -471,7 +464,8 @@ class TestLoadData:
                                 splits_dir=None,
                             )
 
-        mock_ld.assert_called_once()
+        # load_dataset trebuie apelat de 3 ori: train, val, test
+        assert mock_ld.call_count == 3
 
 
 # ===========================================================================
@@ -569,7 +563,7 @@ def _make_client_with_real_loaders(node_id="node1", n_train=8, n_val=8):
 
     with patch.object(fc, "get_model", return_value=tiny):
         with patch.object(fc, "create_payload_signer", return_value=MagicMock(is_ready=lambda: False)):
-            with patch.object(FedMedClient, "_load_data", return_value=(train_loader, val_loader)):
+            with patch.object(FedMedClient, "_load_data", return_value=(train_loader, val_loader, None)):
                 with patch.object(fc, "train_model", return_value=mock_history):
                     c = FedMedClient(
                         node_id=node_id,
@@ -790,7 +784,7 @@ class TestFedMedClientInitBranches:
 
         with patch.object(fc, "get_model", return_value=tiny):
             with patch.object(fc, "create_payload_signer", return_value=mock_signer):
-                with patch.object(FedMedClient, "_load_data", return_value=(mock_loader, mock_loader)):
+                with patch.object(FedMedClient, "_load_data", return_value=(mock_loader, mock_loader, None)):
                     c = FedMedClient(
                         node_id="node1",
                         model_name="efficientnet_b0",
@@ -810,7 +804,7 @@ class TestFedMedClientInitBranches:
 
         with patch.object(fc, "get_model", return_value=tiny):
             with patch.object(fc, "create_payload_signer", side_effect=RuntimeError("cert error")):
-                with patch.object(FedMedClient, "_load_data", return_value=(mock_loader, mock_loader)):
+                with patch.object(FedMedClient, "_load_data", return_value=(mock_loader, mock_loader, None)):
                     c = FedMedClient(
                         node_id="node1",
                         model_name="efficientnet_b0",
@@ -829,7 +823,7 @@ class TestFedMedClientInitBranches:
 
         with patch.object(fc, "get_model", return_value=tiny):
             with patch.object(fc, "create_payload_signer", return_value=MagicMock(is_ready=lambda: False)):
-                with patch.object(FedMedClient, "_load_data", return_value=(mock_loader, mock_loader)):
+                with patch.object(FedMedClient, "_load_data", return_value=(mock_loader, mock_loader, None)):
                     with patch.object(FedMedClient, "_validate_model_for_dp"):
                         c = FedMedClient(
                             node_id="node1",
@@ -899,41 +893,32 @@ class TestLoadDataSuccess:
 
 
 # ===========================================================================
-# FedMedClient._load_data — fallback complet (random_split 80/20)
+# FedMedClient._load_data — fallback complet (train/val/test folders)
 # ===========================================================================
 
 class TestLoadDataFallbackComplete:
 
-    def test_fallback_creates_train_val_split_80_20(self):
+    def test_fallback_loads_all_three_splits(self):
         """
-        Fallback: load_dataset → random_split 80/20 → create_dataloaders.
-        Verificăm că split-ul e 80/20 și că loaders sunt returnați corect.
+        Fallback: load_dataset apelat cu split='train', 'val', 'test'.
         """
-        n_total = 100
         mock_dataset = MagicMock()
-        mock_dataset.__len__ = MagicMock(return_value=n_total)
-
-        mock_train = MagicMock()
-        mock_train.__len__ = MagicMock(return_value=80)
-        mock_val = MagicMock()
-        mock_val.__len__ = MagicMock(return_value=20)
+        mock_dataset.__len__ = MagicMock(return_value=100)
 
         mock_train_loader = MagicMock()
-        mock_train_loader.dataset = mock_train
+        mock_train_loader.dataset = mock_dataset
         mock_val_loader = MagicMock()
-        mock_val_loader.dataset = mock_val
+        mock_val_loader.dataset = mock_dataset
+        mock_test_loader = MagicMock()
+        mock_test_loader.dataset = mock_dataset
 
         tiny = _make_tiny_model()
-
-        # random_split e importat local în _load_data cu `from torch.utils.data import random_split`
-        # → patch-uim pe torch.utils.data direct
-        import torch.utils.data as _tud
 
         with patch.object(fc, "get_model", return_value=tiny):
             with patch.object(fc, "create_payload_signer", return_value=MagicMock(is_ready=lambda: False)):
                 with patch.object(fc, "load_dataset", return_value=mock_dataset) as mock_ld:
-                    with patch.object(_tud, "random_split", return_value=(mock_train, mock_val)) as mock_rs:
-                        with patch.object(fc, "create_dataloaders", return_value=(mock_train_loader, mock_val_loader)):
+                    with patch.object(fc, "create_dataloaders", return_value=(mock_train_loader, mock_val_loader)):
+                        with patch("torch.utils.data.DataLoader", return_value=mock_test_loader):
                             c = FedMedClient(
                                 node_id="node1",
                                 model_name="efficientnet_b0",
@@ -944,45 +929,44 @@ class TestLoadDataFallbackComplete:
                                 splits_dir=None,
                             )
 
-        mock_ld.assert_called_once_with("/fake/dataset", split="train")
-        call_args = mock_rs.call_args[0]
-        assert call_args[1] == [80, 20]
+        assert mock_ld.call_count == 3
+        calls = [call[1]["split"] for call in mock_ld.call_args_list]
+        assert "train" in calls
+        assert "val" in calls
+        assert "test" in calls
+
+    def test_fallback_train_loader_and_val_loader_set(self):
+        """train_loader și val_loader sunt setate corect din create_dataloaders."""
+        mock_dataset = MagicMock()
+        mock_dataset.__len__ = MagicMock(return_value=50)
+
+        mock_train_loader = MagicMock()
+        mock_train_loader.dataset = mock_dataset
+        mock_val_loader = MagicMock()
+        mock_val_loader.dataset = mock_dataset
+        mock_test_loader = MagicMock()
+        mock_test_loader.dataset = mock_dataset
+
+        tiny = _make_tiny_model()
+
+        with patch.object(fc, "get_model", return_value=tiny):
+            with patch.object(fc, "create_payload_signer", return_value=MagicMock(is_ready=lambda: False)):
+                with patch.object(fc, "load_dataset", return_value=mock_dataset):
+                    with patch.object(fc, "create_dataloaders", return_value=(mock_train_loader, mock_val_loader)):
+                        with patch("torch.utils.data.DataLoader", return_value=mock_test_loader):
+                            c = FedMedClient(
+                                node_id="node1",
+                                model_name="efficientnet_b0",
+                                num_classes=2,
+                                dataset_path="/fake",
+                                device="cpu",
+                                enable_signing=False,
+                                splits_dir=None,
+                            )
+
         assert c.train_loader is mock_train_loader
         assert c.val_loader is mock_val_loader
-
-    def test_fallback_train_size_is_80_percent(self):
-        """train_size = int(0.8 * len(dataset))."""
-        import torch.utils.data as _tud
-
-        for n in [10, 50, 100]:
-            mock_dataset = MagicMock()
-            mock_dataset.__len__ = MagicMock(return_value=n)
-            expected_train = int(0.8 * n)
-            expected_val = n - expected_train
-
-            mock_train = MagicMock()
-            mock_val = MagicMock()
-            mock_loader = MagicMock()
-            mock_loader.dataset = []
-            tiny = _make_tiny_model()
-
-            with patch.object(fc, "get_model", return_value=tiny):
-                with patch.object(fc, "create_payload_signer", return_value=MagicMock(is_ready=lambda: False)):
-                    with patch.object(fc, "load_dataset", return_value=mock_dataset):
-                        with patch.object(_tud, "random_split", return_value=(mock_train, mock_val)) as mock_rs:
-                            with patch.object(fc, "create_dataloaders", return_value=(mock_loader, mock_loader)):
-                                FedMedClient(
-                                    node_id="node1",
-                                    model_name="efficientnet_b0",
-                                    num_classes=2,
-                                    dataset_path="/fake",
-                                    device="cpu",
-                                    enable_signing=False,
-                                    splits_dir=None,
-                                )
-
-            sizes = mock_rs.call_args[0][1]
-            assert sizes == [expected_train, expected_val]
+        assert c.test_loader is mock_test_loader
 
 
 # ===========================================================================
@@ -1057,7 +1041,7 @@ class TestValidateModelForDp:
 
         with patch.object(fc, "get_model", return_value=tiny):
             with patch.object(fc, "create_payload_signer", return_value=MagicMock(is_ready=lambda: False)):
-                with patch.object(FedMedClient, "_load_data", return_value=(mock_loader, mock_loader)):
+                with patch.object(FedMedClient, "_load_data", return_value=(mock_loader, mock_loader, None)):
                     with patch.object(FedMedClient, "_validate_model_for_dp"):
                         c = FedMedClient(
                             node_id="node1",
@@ -1130,7 +1114,7 @@ class TestInitDpLogLines:
 
         with patch.object(fc, "get_model", return_value=tiny):
             with patch.object(fc, "create_payload_signer", return_value=MagicMock(is_ready=lambda: False)):
-                with patch.object(FedMedClient, "_load_data", return_value=(mock_loader, mock_loader)):
+                with patch.object(FedMedClient, "_load_data", return_value=(mock_loader, mock_loader, None)):
                     with patch.object(FedMedClient, "_validate_model_for_dp"):
                         with patch.object(fc, "get_logger", return_value=mock_log):
                             c = FedMedClient(
@@ -1172,7 +1156,7 @@ class TestFitDpBranch:
 
         with patch.object(fc, "get_model", return_value=tiny):
             with patch.object(fc, "create_payload_signer", return_value=MagicMock(is_ready=lambda: False)):
-                with patch.object(FedMedClient, "_load_data", return_value=(train_loader, val_loader)):
+                with patch.object(FedMedClient, "_load_data", return_value=(train_loader, val_loader, None)):
                     with patch.object(FedMedClient, "_validate_model_for_dp"):
                         with patch.object(fc, "train_model", return_value=mock_history):
                             c = FedMedClient(

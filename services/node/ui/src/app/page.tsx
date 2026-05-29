@@ -179,7 +179,7 @@ export default function DashboardPage() {
                       {deployed ? `${deployed.model_name} ${deployed.version}` : 'None'}
                     </Typography>
                     <Typography variant="body2" sx={{ mt: 1, color: 'text.secondary' }}>
-                      {deployed ? `Hash: ${deployed.model_id.substring(0, 8)}...` : 'Promote a candidate model to deploy.'}
+                      {deployed ? '' : 'Promote a candidate model to deploy.'}
                     </Typography>
                   </CardContent>
                 </Card>
@@ -193,7 +193,7 @@ export default function DashboardPage() {
                       {lastRound ? lastRound.job_id : 'No sessions yet'}
                     </Typography>
                     <Typography variant="body2" sx={{ mt: 1, color: 'text.secondary' }}>
-                      {lastRound ? `Status: ${lastRound.status}` : 'Pull a plan to start.'}
+                      {lastRound ? `Status: ${lastRound.local_status}` : 'Pull a plan to start.'}
                     </Typography>
                   </CardContent>
                 </Card>

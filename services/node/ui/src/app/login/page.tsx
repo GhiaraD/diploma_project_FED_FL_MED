@@ -13,14 +13,19 @@ import {
   Alert,
   CircularProgress,
   Avatar,
+  IconButton,
+  InputAdornment,
 } from '@mui/material';
 import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
+import Visibility from '@mui/icons-material/Visibility';
+import VisibilityOff from '@mui/icons-material/VisibilityOff';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   
   const { login } = useAuth();
   const router = useRouter();
@@ -32,7 +37,18 @@ export default function LoginPage() {
 
     try {
       await login(email, password);
-      router.push('/');
+
+      // Read role from localStorage (set by login())
+      const storedUser = localStorage.getItem('auth_user');
+      const role = storedUser ? JSON.parse(storedUser).role : null;
+
+      if (role === 'doctor') {
+        router.push('/models');
+      } else if (role === 'viewer') {
+        router.push('/inference');
+      } else {
+        router.push('/');
+      }
     } catch (err: any) {
       setError(err.message || 'Login failed. Please check your credentials.');
     } finally {
@@ -106,12 +122,27 @@ export default function LoginPage() {
               fullWidth
               name="password"
               label="Password"
-              type="password"
+              type={showPassword ? 'text' : 'password'}
               id="password"
               autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               disabled={isLoading}
+              slotProps={{
+                input: {
+                  endAdornment: (
+                    <InputAdornment position="end">
+                      <IconButton
+                        onClick={() => setShowPassword((prev) => !prev)}
+                        edge="end"
+                        tabIndex={-1}
+                      >
+                        {showPassword ? <VisibilityOff /> : <Visibility />}
+                      </IconButton>
+                    </InputAdornment>
+                  ),
+                },
+              }}
             />
             <Button
               type="submit"

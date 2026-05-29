@@ -23,6 +23,7 @@ import {
   DialogContent,
   DialogActions,
   Divider,
+  TextField,
 } from '@mui/material';
 import {
   Refresh as RefreshIcon,
@@ -60,6 +61,7 @@ export default function FederatedPage() {
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [selectedSession, setSelectedSession] = useState<TrainingSession | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const { token } = useAuth();
 
   useEffect(() => {
@@ -137,7 +139,10 @@ export default function FederatedPage() {
     });
   };
 
-  const paginatedSessions = sessions.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
+  const filteredSessions = sessions.filter((s) =>
+    searchQuery === '' || s.session_id.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+  const paginatedSessions = filteredSessions.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
 
   return (
     <ProtectedRoute>
@@ -162,6 +167,17 @@ export default function FederatedPage() {
             </Box>
           ) : (
             <>
+              <Paper sx={{ p: 2, mb: 2 }}>
+                <TextField
+                  label="Search by Session ID"
+                  value={searchQuery}
+                  onChange={(e) => { setSearchQuery(e.target.value); setPage(0); }}
+                  size="small"
+                  sx={{ minWidth: 320 }}
+                  placeholder="e.g. federated_abc123..."
+                />
+              </Paper>
+
               <TableContainer component={Paper}>
                 <Table>
                   <TableHead>
@@ -182,7 +198,9 @@ export default function FederatedPage() {
                       <TableRow>
                         <TableCell colSpan={9} align="center">
                           <Typography variant="body2" color="text.secondary" sx={{ py: 4 }}>
-                            No federated learning sessions yet. Training sessions will appear here automatically.
+                            {searchQuery
+                              ? `No sessions found matching "${searchQuery}"`
+                              : 'No federated learning sessions yet. Training sessions will appear here automatically.'}
                           </Typography>
                         </TableCell>
                       </TableRow>
@@ -249,7 +267,7 @@ export default function FederatedPage() {
                                 <Typography variant="body2" sx={{ fontSize: '0.75rem', fontFamily: 'monospace' }}>
                                   {s.model_id.substring(0, 20)}...
                                 </Typography>
-                                <Chip label={s.model_type} size="small" variant="outlined" sx={{ mt: 0.5 }} />
+                                <Chip label={s.model_type === 'deployed' ? 'active' : s.model_type} size="small" variant="outlined" sx={{ mt: 0.5 }} />
                               </Box>
                             ) : (
                               <Typography variant="body2" color="text.secondary">-</Typography>
@@ -279,7 +297,7 @@ export default function FederatedPage() {
                 <TablePagination
                   rowsPerPageOptions={[5, 10, 25, 50]}
                   component="div"
-                  count={sessions.length}
+                  count={filteredSessions.length}
                   rowsPerPage={rowsPerPage}
                   page={page}
                   onPageChange={handleChangePage}
@@ -383,7 +401,7 @@ export default function FederatedPage() {
                             </Box>
                             <Box>
                               <Typography variant="body2" color="text.secondary">Model Type</Typography>
-                              <Chip label={selectedSession.model_type} size="small" color="primary" sx={{ mt: 0.5 }} />
+                              <Chip label={selectedSession.model_type === 'deployed' ? 'active' : selectedSession.model_type} size="small" color="primary" sx={{ mt: 0.5 }} />
                             </Box>
                           </Box>
                         </Box>

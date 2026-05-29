@@ -46,7 +46,6 @@ class SecurityManager:
         self.rate_limits = {
             "admin": 1000,      # 1000 req/min
             "doctor": 100,      # 100 req/min
-            "researcher": 50,   # 50 req/min
             "viewer": 30,       # 30 req/min
             "api_key": 500      # 500 req/min for inter-node
         }
@@ -61,16 +60,12 @@ class SecurityManager:
         self.permissions_map = {
             "admin": ["*"],  # Full access
             "doctor": [
-                "read:models", "write:inference", "read:datasets", 
-                "read:jobs", "read:inference_history"
-            ],
-            "researcher": [
-                "read:models", "write:training", "write:federated", 
-                "read:datasets", "write:datasets", "read:jobs"
+                "read:models", "write:models", "write:inference", "read:inference",
+                "read:datasets", "read:jobs", "read:inference_history"
             ],
             "viewer": [
-                "read:models", "read:datasets", "read:jobs", 
-                "read:inference_history"
+                "read:models", "read:inference",
+                "read:inference_history", "read:jobs"
             ]
         }
     

@@ -20,7 +20,6 @@ import {
   CircularProgress,
   Alert,
   Chip,
-  MenuItem,
   IconButton,
   Tooltip,
   Breadcrumbs,
@@ -90,7 +89,6 @@ export default function DatasetsPage() {
   const [browsing, setBrowsing] = useState(false);
   const [selectedPath, setSelectedPath] = useState<string>('');
   const [datasetName, setDatasetName] = useState<string>('');
-  const [split, setSplit] = useState('train');
 
   useEffect(() => {
     if (token) {
@@ -166,7 +164,6 @@ export default function DatasetsPage() {
         body: JSON.stringify({
           path: selectedPath,
           name: datasetName,
-          split: split
         }),
       });
 
@@ -270,14 +267,10 @@ export default function DatasetsPage() {
               <CheckCircleIcon color="success" />
               Active Dataset
             </Typography>
-            <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 2 }}>
+            <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 2 }}>
               <Box>
                 <Typography variant="body2" color="text.secondary">Name</Typography>
                 <Typography variant="body1" fontWeight="bold">{activeDataset.name}</Typography>
-              </Box>
-              <Box>
-                <Typography variant="body2" color="text.secondary">Split</Typography>
-                <Typography variant="body1">{activeDataset.split}</Typography>
               </Box>
               <Box>
                 <Typography variant="body2" color="text.secondary">Total Samples</Typography>
@@ -303,7 +296,6 @@ export default function DatasetsPage() {
               <TableHead>
                 <TableRow>
                   <TableCell>Name</TableCell>
-                  <TableCell>Split</TableCell>
                   <TableCell align="right">Total Samples</TableCell>
                   <TableCell align="right">Normal</TableCell>
                   <TableCell align="right">Pneumonia</TableCell>
@@ -314,7 +306,7 @@ export default function DatasetsPage() {
               <TableBody>
                 {datasets.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} align="center">
+                    <TableCell colSpan={6} align="center">
                       <Typography variant="body2" color="text.secondary">
                         No datasets registered. Browse and register a dataset from the hospital system.
                       </Typography>
@@ -330,9 +322,6 @@ export default function DatasetsPage() {
                             <Chip label="Active" size="small" color="success" icon={<CheckCircleIcon />} />
                           )}
                         </Box>
-                      </TableCell>
-                      <TableCell>
-                        <Chip label={dataset.split} size="small" color="primary" />
                       </TableCell>
                       <TableCell align="right">{dataset.num_samples}</TableCell>
                       <TableCell align="right">{dataset.num_normal}</TableCell>
@@ -475,19 +464,7 @@ export default function DatasetsPage() {
                   label="Dataset Name"
                   value={datasetName}
                   onChange={(e) => setDatasetName(e.target.value)}
-                  sx={{ mb: 2 }}
                 />
-                <TextField
-                  select
-                  fullWidth
-                  label="Split"
-                  value={split}
-                  onChange={(e) => setSplit(e.target.value)}
-                >
-                  <MenuItem value="train">Train</MenuItem>
-                  <MenuItem value="val">Validation</MenuItem>
-                  <MenuItem value="test">Test</MenuItem>
-                </TextField>
               </Box>
             )}
           </DialogContent>

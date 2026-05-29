@@ -200,7 +200,7 @@ class FedMedClient(fl.client.NumPyClient):
                 self.enable_signing = False
 
         # Load dataset
-        self.train_loader, self.val_loader = self._load_data()
+        self.train_loader, self.val_loader, self.test_loader = self._load_data()
 
         self._log.info("Flower client initialized")
         self._log.step(f"Model: {model_name}")
@@ -251,32 +251,36 @@ class FedMedClient(fl.client.NumPyClient):
             self._log.step(f"Train CSV: {train_csv} ({len(train_dataset)} imagini)")
             self._log.step(f"Val CSV: {val_csv} ({len(val_dataset)} imagini)")
 
-            return train_loader, val_loader
+            # Calea experiment nu are CSV de test — test_loader rămâne None
+            return train_loader, val_loader, None
 
-        # Fallback: comportamentul original cu random_split 80/20
+        # Calea UI: folosim cele 3 foldere din dataset
         train_dataset = load_dataset(self.dataset_path, split='train')
-        
-        # Split for validation
-        from torch.utils.data import random_split
-        train_size = int(0.8 * len(train_dataset))
-        val_size = len(train_dataset) - train_size
-        train_dataset, val_dataset = random_split(
-            train_dataset, [train_size, val_size]
-        )
-        
-        # Create dataloaders
+        val_dataset = load_dataset(self.dataset_path, split='val')
+        test_dataset = load_dataset(self.dataset_path, split='test')
+
         train_loader, val_loader = create_dataloaders(
             train_dataset,
             val_dataset,
             batch_size=self.batch_size,
             num_workers=0  # Must be 0 for Celery workers
         )
-        
+
+        from torch.utils.data import DataLoader
+        test_loader = DataLoader(
+            test_dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=0,
+            pin_memory=True
+        )
+
         self._log.ok("Dataset loaded:")
         self._log.step(f"Training samples: {len(train_dataset)}")
         self._log.step(f"Validation samples: {len(val_dataset)}")
-        
-        return train_loader, val_loader
+        self._log.step(f"Test samples: {len(test_dataset)}")
+
+        return train_loader, val_loader, test_loader
     
     def _validate_model_for_dp(self):
         """Validate and fix model for Differential Privacy compatibility."""
@@ -646,63 +650,70 @@ class FedMedClient(fl.client.NumPyClient):
     ) -> Tuple[float, int, Dict]:
         """
         Evaluate model locally.
-        
+
+        Uses test_loader (test/ folder) when available (UI path),
+        falls back to val_loader (experiment/CSV path).
+
         Args:
             parameters: Model parameters to evaluate
             config: Evaluation configuration
-        
+
         Returns:
             - Loss
             - Number of evaluation samples
             - Metrics dict
         """
-        self._log.info(f"Evaluating model...")
-        
+        eval_loader = self.test_loader if self.test_loader is not None else self.val_loader
+        eval_split = "test" if self.test_loader is not None else "val"
+        self._log.info(f"Evaluating model on {eval_split} set...")
+
         # Set parameters
         self.set_parameters(parameters)
-        
+
         # Evaluate
         self.model.eval()
         criterion = torch.nn.CrossEntropyLoss()
-        
+
         total_loss = 0.0
         y_true, y_pred, y_probs = [], [], []
-        
+
         with torch.no_grad():
-            for inputs, labels in self.val_loader:
+            for inputs, labels in eval_loader:
                 inputs, labels = inputs.to(self.device), labels.to(self.device)
                 outputs = self.model(inputs)
                 loss = criterion(outputs, labels)
-                
+
                 total_loss += loss.item() * inputs.size(0)
-                
+
                 probs = torch.softmax(outputs, dim=1)
                 preds = torch.argmax(outputs, dim=1)
-                
+
                 y_true.extend(labels.cpu().numpy())
                 y_pred.extend(preds.cpu().numpy())
                 y_probs.extend(probs[:, 1].cpu().numpy())
-        
+
         # Calculate metrics
-        avg_loss = total_loss / len(self.val_loader.dataset)
-        num_samples = len(self.val_loader.dataset)
-        
+        avg_loss = total_loss / len(eval_loader.dataset)
+        num_samples = len(eval_loader.dataset)
+
         metrics_full = compute_metrics(y_true, y_pred, y_probs)
-        
+
         # Filter only scalar metrics for Flower (no lists/arrays)
         metrics = {
             'accuracy': float(metrics_full.get('accuracy', 0)),
             'f1': float(metrics_full.get('f1', 0)),
             'precision': float(metrics_full.get('precision', 0)),
             'recall': float(metrics_full.get('recall', 0)),
-            'auc': float(metrics_full.get('auc', 0)),
+            'auc': float(metrics_full.get('auc', 0) or 0),
+            'specificity': float(metrics_full.get('specificity', 0)),
+            'sensitivity': float(metrics_full.get('sensitivity', metrics_full.get('recall', 0))),
         }
-        
-        self._log.info("Evaluation results:")
+
+        self._log.info(f"Evaluation results ({eval_split}):")
         self._log.step(f"Loss: {avg_loss:.4f}")
         self._log.step(f"Accuracy: {metrics.get('accuracy', 0):.4f}")
         self._log.step(f"F1: {metrics.get('f1', 0):.4f}")
-        
+
         return avg_loss, num_samples, metrics
 
 

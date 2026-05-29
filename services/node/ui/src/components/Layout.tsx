@@ -39,14 +39,27 @@ import { useState } from 'react';
 const drawerWidth = 240;
 
 const menuItems = [
-  { text: 'Dashboard', icon: <DashboardIcon />, href: '/' },
-  { text: 'Datasets', icon: <FolderIcon />, href: '/datasets' },
-  { text: 'Federated', icon: <HubIcon />, href: '/federated' },
-  { text: 'Models', icon: <StorageIcon />, href: '/models' },
-  { text: 'Inference', icon: <PsychologyIcon />, href: '/inference' },
-  { text: 'Jobs', icon: <WorkIcon />, href: '/jobs' },
-  { text: 'Audit', icon: <SecurityIcon />, href: '/audit' },
+  { text: 'Dashboard', icon: <DashboardIcon />, href: '/', requiredPermission: 'read:dashboard' },
+  { text: 'Datasets', icon: <FolderIcon />, href: '/datasets', requiredPermission: 'read:datasets' },
+  { text: 'Federated', icon: <HubIcon />, href: '/federated', requiredPermission: 'write:federated' },
+  { text: 'Models', icon: <StorageIcon />, href: '/models', requiredPermission: 'read:models' },
+  { text: 'Inference', icon: <PsychologyIcon />, href: '/inference', requiredPermission: 'read:inference' },
+  { text: 'Jobs', icon: <WorkIcon />, href: '/jobs', requiredPermission: 'read:jobs' },
+  { text: 'Audit', icon: <SecurityIcon />, href: '/audit', requiredPermission: 'admin' },
 ];
+
+function hasPermission(role: string | undefined, required: string | null): boolean {
+  if (required === null) return true;
+  if (role === 'admin') return true;
+  if (required === 'admin') return false;
+
+  const permissionsMap: Record<string, string[]> = {
+    doctor:     ['read:models', 'write:models', 'write:inference', 'read:inference', 'read:datasets', 'read:jobs', 'read:inference_history'],
+    viewer:     ['read:models', 'read:inference', 'read:inference_history', 'read:jobs'],
+  };
+
+  return (permissionsMap[role ?? ''] ?? []).includes(required);
+}
 
 interface LayoutProps {
   children: ReactNode;
@@ -58,6 +71,8 @@ export default function Layout({ children, title = 'Node Portal', nodeId }: Layo
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout } = useAuth();
+
+  const resolvedNodeId = nodeId || user?.node_id;
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
 
   // Use API interceptor for automatic token expiration handling
@@ -86,7 +101,7 @@ export default function Layout({ children, title = 'Node Portal', nodeId }: Layo
       <AppBar position="fixed" sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}>
         <Toolbar>
           <Typography variant="h6" noWrap component="div" sx={{ flexGrow: 1 }}>
-            Fed-Med-FL - {nodeId || title}
+            Fed-Med-FL - {resolvedNodeId || title}
           </Typography>
 
           {/* User Menu */}
@@ -162,18 +177,24 @@ export default function Layout({ children, title = 'Node Portal', nodeId }: Layo
         <Toolbar />
         <Box sx={{ overflow: 'auto' }}>
           <List>
-            {menuItems.map((item) => (
-              <ListItem key={item.text} disablePadding>
-                <ListItemButton
-                  component={Link}
-                  href={item.href}
-                  selected={pathname === item.href}
-                >
-                  <ListItemIcon>{item.icon}</ListItemIcon>
-                  <ListItemText primary={item.text} />
-                </ListItemButton>
-              </ListItem>
-            ))}
+            {user && menuItems
+              .filter((item) => {
+                const result = hasPermission(user.role, item.requiredPermission);
+                console.log(`[RBAC] role=${user.role} page=${item.text} required=${item.requiredPermission} → ${result}`);
+                return result;
+              })
+              .map((item) => (
+                <ListItem key={item.text} disablePadding>
+                  <ListItemButton
+                    component={Link}
+                    href={item.href}
+                    selected={pathname === item.href}
+                  >
+                    <ListItemIcon>{item.icon}</ListItemIcon>
+                    <ListItemText primary={item.text} />
+                  </ListItemButton>
+                </ListItem>
+              ))}
           </List>
         </Box>
       </Drawer>

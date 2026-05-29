@@ -22,7 +22,7 @@ def create_default_users():
     """Create default users for each node."""
     
     # Connect to each node's database
-    nodes = ['node1', 'node2', 'node3', 'node4', 'node5']
+    nodes = ['node1', 'node2', 'node3', 'node4']
     
     for node in nodes:
         db_path = f"storage/{node}/node.db"
@@ -99,23 +99,16 @@ def create_default_users():
                     "password": f"Doctor{node.capitalize()}@2026",
                     "role": "doctor",
                     "node_id": node
-                },
-                {
-                    "email": f"researcher@{node}.fed-med-fl.com",
-                    "password": f"Researcher{node.capitalize()}@2026", 
-                    "role": "researcher",
-                    "node_id": node
                 }
             ]
             
-            # Add viewer user only to node1
-            if node == "node1":
-                default_users.append({
-                    "email": "viewer@fed-med-fl.com",
-                    "password": "ViewerAccess@2026",
-                    "role": "viewer", 
-                    "node_id": "node1"
-                })
+            # Add viewer user for each node
+            default_users.append({
+                "email": f"viewer@{node}.fed-med-fl.com",
+                "password": f"Viewer{node.capitalize()}@2026",
+                "role": "viewer",
+                "node_id": node
+            })
             
             for user_data in default_users:
                 # Check if user already exists
@@ -199,27 +192,22 @@ def print_summary():
     print("├─────────────────────────────────────┼──────────────┼────────┤")
     print("│ admin@node1.fed-med-fl.com          │ admin        │ node1  │")
     print("│ doctor@node1.fed-med-fl.com         │ doctor       │ node1  │")
-    print("│ researcher@node1.fed-med-fl.com     │ researcher   │ node1  │")
+    print("│ viewer@node1.fed-med-fl.com         │ viewer       │ node1  │")
     print("│ admin@node2.fed-med-fl.com          │ admin        │ node2  │")
     print("│ doctor@node2.fed-med-fl.com         │ doctor       │ node2  │")
-    print("│ researcher@node2.fed-med-fl.com     │ researcher   │ node2  │")
+    print("│ viewer@node2.fed-med-fl.com         │ viewer       │ node2  │")
     print("│ admin@node3.fed-med-fl.com          │ admin        │ node3  │")
     print("│ doctor@node3.fed-med-fl.com         │ doctor       │ node3  │")
-    print("│ researcher@node3.fed-med-fl.com     │ researcher   │ node3  │")
+    print("│ viewer@node3.fed-med-fl.com         │ viewer       │ node3  │")
     print("│ admin@node4.fed-med-fl.com          │ admin        │ node4  │")
     print("│ doctor@node4.fed-med-fl.com         │ doctor       │ node4  │")
-    print("│ researcher@node4.fed-med-fl.com     │ researcher   │ node4  │")
-    print("│ admin@node5.fed-med-fl.com          │ admin        │ node5  │")
-    print("│ doctor@node5.fed-med-fl.com         │ doctor       │ node5  │")
-    print("│ researcher@node5.fed-med-fl.com     │ researcher   │ node5  │")
-    print("│ viewer@fed-med-fl.com               │ viewer       │ node1  │")
+    print("│ viewer@node4.fed-med-fl.com         │ viewer       │ node4  │")
     print("└─────────────────────────────────────┴──────────────┴────────┘")
     
     print("\n🔑 Default Passwords:")
-    print("  • Admin passwords: AdminNode{X}@2026")
-    print("  • Doctor passwords: DoctorNode{X}@2026") 
-    print("  • Researcher passwords: ResearcherNode{X}@2026")
-    print("  • Viewer password: ViewerAccess@2026")
+    print("  • Admin passwords: Admin{Node}@2026")
+    print("  • Doctor passwords: Doctor{Node}@2026")
+    print("  • Viewer passwords: Viewer{Node}@2026")
     
     print("\n🛡️ Security Features Enabled:")
     print("  ✅ JWT Authentication (30min expiry)")
@@ -235,7 +223,6 @@ def print_summary():
     print("  • storage/node2_api_key.txt")
     print("  • storage/node3_api_key.txt")
     print("  • storage/node4_api_key.txt")
-    print("  • storage/node5_api_key.txt")
     
     print("\n🚀 Next Steps:")
     print("  1. Test login: POST /api/auth/login")

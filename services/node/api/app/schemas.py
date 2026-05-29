@@ -13,7 +13,7 @@ from datetime import datetime
 class UserCreate(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=12, description="Password must be at least 12 characters")
-    role: str = Field(..., pattern="^(admin|doctor|researcher|viewer)$")
+    role: str = Field(..., pattern="^(admin|doctor|viewer)$")
     node_id: str = Field(..., pattern="^(node1|node2|node3|central)$")
 
 
@@ -195,20 +195,6 @@ class JobCreateResponse(BaseModel):
 
 
 # ============================================================================
-# Training
-# ============================================================================
-
-class TrainRequest(BaseModel):
-    dataset_id: str
-    model_name: str = "resnet18"
-    num_epochs: int = 10
-    batch_size: int = 32
-    learning_rate: float = 0.001
-    optimizer: str = "adam"
-    scheduler: Optional[str] = "cosine"
-
-
-# ============================================================================
 # Inference
 # ============================================================================
 
@@ -290,5 +276,4 @@ class DatasetUploadResponse(BaseModel):
 class DatasetRegisterRequest(BaseModel):
     path: str
     name: str
-    split: str = "train"
 

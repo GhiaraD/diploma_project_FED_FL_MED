@@ -57,8 +57,6 @@ export default function JobsTable({ jobs }: JobsTableProps) {
     if (job.status === 'completed') {
       if (job.job_type === 'infer') {
         return 'Inference completed';
-      } else if (job.job_type === 'train') {
-        return 'Training completed';
       } else if (job.job_type === 'federated_train') {
         return 'Federated training completed';
       }
@@ -71,6 +69,14 @@ export default function JobsTable({ jobs }: JobsTableProps) {
       return 'Job failed';
     }
     return '—';
+  };
+
+  const formatJobType = (jobType: string) => {
+    switch (jobType) {
+      case 'infer': return 'Inference';
+      case 'federated_train': return 'Federated Training';
+      default: return jobType;
+    }
   };
 
   if (jobs.length === 0) {
@@ -89,7 +95,7 @@ export default function JobsTable({ jobs }: JobsTableProps) {
         <TableHead>
           <TableRow>
             <TableCell sx={{ fontWeight: 600 }}>Job</TableCell>
-            <TableCell sx={{ fontWeight: 600 }}>Kind</TableCell>
+            <TableCell sx={{ fontWeight: 600 }}>Type</TableCell>
             <TableCell sx={{ fontWeight: 600 }}>Status</TableCell>
             <TableCell sx={{ fontWeight: 600 }}>Message</TableCell>
             <TableCell sx={{ fontWeight: 600 }}>Created</TableCell>
@@ -104,7 +110,7 @@ export default function JobsTable({ jobs }: JobsTableProps) {
               onClick={() => router.push('/jobs')}
             >
               <TableCell>{job.job_id}</TableCell>
-              <TableCell>{job.job_type}</TableCell>
+              <TableCell>{formatJobType(job.job_type)}</TableCell>
               <TableCell>
                 <Chip
                   label={job.status}

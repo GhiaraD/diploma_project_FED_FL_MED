@@ -318,9 +318,11 @@ export default function AuditPage() {
                         </TableCell>
                         <TableCell>
                           {log.user_id ? (
-                            <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>
-                              {log.user_id.substring(0, 12)}...
-                            </Typography>
+                            <Tooltip title={log.user_id}>
+                              <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.75rem', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {log.user_id}
+                              </Typography>
+                            </Tooltip>
                           ) : (
                             <Typography variant="body2" color="text.secondary">
                               -

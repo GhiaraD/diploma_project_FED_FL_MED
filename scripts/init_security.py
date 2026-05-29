@@ -46,12 +46,6 @@ def create_default_users():
                 "role": "doctor",
                 "node_id": "node1"
             },
-            {
-                "email": "researcher@node1.fed-med-fl.com",
-                "password": "ResearcherNode1@2026", 
-                "role": "researcher",
-                "node_id": "node1"
-            },
             
             # Node 2 users
             {
@@ -66,12 +60,6 @@ def create_default_users():
                 "role": "doctor",
                 "node_id": "node2"
             },
-            {
-                "email": "researcher@node2.fed-med-fl.com",
-                "password": "ResearcherNode2@2026",
-                "role": "researcher", 
-                "node_id": "node2"
-            },
             
             # Node 3 users
             {
@@ -84,12 +72,6 @@ def create_default_users():
                 "email": "doctor@node3.fed-med-fl.com",
                 "password": "DoctorNode3@2026", 
                 "role": "doctor",
-                "node_id": "node3"
-            },
-            {
-                "email": "researcher@node3.fed-med-fl.com",
-                "password": "ResearcherNode3@2026",
-                "role": "researcher",
                 "node_id": "node3"
             },
             
@@ -239,20 +221,16 @@ def print_summary():
     print("├─────────────────────────────────────┼──────────────┼────────┤")
     print("│ admin@node1.fed-med-fl.com          │ admin        │ node1  │")
     print("│ doctor@node1.fed-med-fl.com         │ doctor       │ node1  │")
-    print("│ researcher@node1.fed-med-fl.com     │ researcher   │ node1  │")
     print("│ admin@node2.fed-med-fl.com          │ admin        │ node2  │")
     print("│ doctor@node2.fed-med-fl.com         │ doctor       │ node2  │")
-    print("│ researcher@node2.fed-med-fl.com     │ researcher   │ node2  │")
     print("│ admin@node3.fed-med-fl.com          │ admin        │ node3  │")
     print("│ doctor@node3.fed-med-fl.com         │ doctor       │ node3  │")
-    print("│ researcher@node3.fed-med-fl.com     │ researcher   │ node3  │")
     print("│ viewer@fed-med-fl.com               │ viewer       │ node1  │")
     print("└─────────────────────────────────────┴──────────────┴────────┘")
     
     print("\n🔑 Default Passwords:")
     print("  • Admin passwords: AdminNode{X}@2026")
     print("  • Doctor passwords: DoctorNode{X}@2026") 
-    print("  • Researcher passwords: ResearcherNode{X}@2026")
     print("  • Viewer password: ViewerAccess@2026")
     
     print("\n🛡️ Security Features Enabled:")

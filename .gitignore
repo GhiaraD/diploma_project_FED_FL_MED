@@ -3,6 +3,8 @@
 Thumbs.db
 .vscode/
 .idea/
+.coverage
+coverage.lcov
 
 # Python
 __pycache__/
@@ -29,6 +31,7 @@ artifacts/
 *.pt
 *.pth
 central_dataset/
+central_dataset_split/
 experiments/
 results/
 

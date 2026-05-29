@@ -222,8 +222,8 @@ class TestGetUserPermissions:
         assert "read:models" in perms
 
     def test_researcher_has_write_training(self):
-        perms = self.sm.get_user_permissions("researcher")
-        assert "write:training" in perms
+        perms = self.sm.get_user_permissions("doctor")
+        assert "write:inference" in perms
 
     def test_viewer_cannot_write(self):
         perms = self.sm.get_user_permissions("viewer")
@@ -235,7 +235,7 @@ class TestGetUserPermissions:
         assert perms == []
 
     def test_returns_list(self):
-        for role in ["admin", "doctor", "researcher", "viewer"]:
+        for role in ["admin", "doctor", "viewer"]:
             assert isinstance(self.sm.get_user_permissions(role), list)
 
 
@@ -279,8 +279,8 @@ class TestHasPermission:
         assert self.sm.has_permission(viewer_perms, "write:training") is False
 
     def test_researcher_can_write_federated(self):
-        researcher_perms = self.sm.get_user_permissions("researcher")
-        assert self.sm.has_permission(researcher_perms, "write:federated") is True
+        admin_perms = self.sm.get_user_permissions("admin")
+        assert self.sm.has_permission(admin_perms, "write:federated") is True
 
 
 # ===========================================================================
@@ -518,7 +518,7 @@ class TestUserCreateSchema:
             )
 
     def test_all_valid_roles_accepted(self):
-        for role in ["admin", "doctor", "researcher", "viewer"]:
+        for role in ["admin", "doctor", "viewer"]:
             user = _schemas.UserCreate(
                 email=f"{role}@node1.com",
                 password="StrongPass@2026!",
@@ -595,26 +595,6 @@ class TestPasswordChangeSchema:
                 current_password="OldPass@2026!",
                 new_password="short",  # min_length=12
             )
-
-
-class TestTrainRequestSchema:
-
-    def test_defaults(self):
-        req = _schemas.TrainRequest(dataset_id="ds_001")
-        assert req.model_name == "resnet18"
-        assert req.num_epochs == 10
-        assert req.batch_size == 32
-        assert req.learning_rate == 0.001
-
-    def test_custom_values(self):
-        req = _schemas.TrainRequest(
-            dataset_id="ds_002",
-            model_name="efficientnet_b0",
-            num_epochs=5,
-            batch_size=16,
-        )
-        assert req.model_name == "efficientnet_b0"
-        assert req.num_epochs == 5
 
 
 class TestFLStartRequestSchema:
