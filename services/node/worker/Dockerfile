@@ -23,7 +23,9 @@ RUN pip install --no-cache-dir \
     celery==5.3.4 \
     redis==5.0.1 \
     sqlalchemy==2.0.23 \
-    flwr>=1.8.0
+    flwr>=1.8.0 \
+    psutil>=5.9.0 \
+    nvidia-ml-py>=12.0.0
 
 # Copy worker and API code (worker needs API for tasks)
 COPY services/node/worker/app /app/worker

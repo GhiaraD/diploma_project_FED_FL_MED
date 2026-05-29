@@ -304,29 +304,47 @@ def federated_training_task(
         
         sys.path.insert(0, '/app/worker')
         from flower_client import start_flower_client, get_last_training_metrics
-        
+        from resource_monitor import ResourceMonitor
+
+        # Start resource monitoring (samples every 0.1s, writes to performance/)
+        perf_dir = Path(settings.STORAGE_ROOT) / "performance"
+        resource_monitor = ResourceMonitor(
+            job_id=job_id,
+            output_dir=str(perf_dir),
+            interval_s=0.1,
+        )
+        resource_monitor.start()
+        _log.info(f"Resource monitor started → {perf_dir}/resources_{job_id}.csv")
+
+        from resource_monitor import set_stage
+        set_stage("waiting_server")
+
         _log.info("Connecting to Flower server...")
         
-        start_flower_client(
-            server_address=settings.FLOWER_SERVER,
-            node_id=settings.NODE_ID,
-            model_name=model_name,
-            num_classes=2,
-            dataset_path=dataset_path,
-            device=settings.DEVICE,
-            batch_size=batch_size,
-            session_id=job_id,
-            enable_ssl=os.getenv("ENABLE_SSL", "true").lower() == "true",
-            certificates_path=os.getenv("CERTIFICATES_PATH", "/certificates"),
-            enable_dp=os.getenv("ENABLE_DP", "false").lower() == "true",
-            dp_target_epsilon=float(os.getenv("DP_TARGET_EPSILON", "1.0")),
-            dp_target_delta=float(os.getenv("DP_TARGET_DELTA", "1e-5")),
-            dp_noise_multiplier=float(os.getenv("DP_NOISE_MULTIPLIER", "1.0")),
-            dp_max_grad_norm=float(os.getenv("DP_MAX_GRAD_NORM", "1.0")),
-            dp_max_epochs=int(os.getenv("DP_MAX_EPOCHS", "10")),
-            # Split-uri fixe (NOU)
-            splits_dir=effective_splits_dir,
-        )        
+        try:
+            start_flower_client(
+                server_address=settings.FLOWER_SERVER,
+                node_id=settings.NODE_ID,
+                model_name=model_name,
+                num_classes=2,
+                dataset_path=dataset_path,
+                device=settings.DEVICE,
+                batch_size=batch_size,
+                session_id=job_id,
+                enable_ssl=os.getenv("ENABLE_SSL", "true").lower() == "true",
+                certificates_path=os.getenv("CERTIFICATES_PATH", "/certificates"),
+                enable_dp=os.getenv("ENABLE_DP", "false").lower() == "true",
+                dp_target_epsilon=float(os.getenv("DP_TARGET_EPSILON", "1.0")),
+                dp_target_delta=float(os.getenv("DP_TARGET_DELTA", "1e-5")),
+                dp_noise_multiplier=float(os.getenv("DP_NOISE_MULTIPLIER", "1.0")),
+                dp_max_grad_norm=float(os.getenv("DP_MAX_GRAD_NORM", "1.0")),
+                dp_max_epochs=int(os.getenv("DP_MAX_EPOCHS", "10")),
+                # Split-uri fixe (NOU)
+                splits_dir=effective_splits_dir,
+            )
+        finally:
+            resource_monitor.stop()
+            _log.ok(f"Resource monitor stopped → {perf_dir}/resources_{job_id}.csv")        
         _log.ok("Flower client completed successfully")
         
         metrics = get_last_training_metrics()

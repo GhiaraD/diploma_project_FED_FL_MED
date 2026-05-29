@@ -18,7 +18,7 @@ from typing import Dict, Optional, Tuple
 # SHARED TRAINING PARAMETERS
 # ============================================================================
 
-NUM_ROUNDS      = 1
+NUM_ROUNDS      = 2
 NUM_EPOCHS      = 1
 MODEL_NAME      = "efficientnet_b0"
 BATCH_SIZE      = 32
@@ -44,9 +44,9 @@ CENTRAL_URL = "http://localhost:8081"
 
 NODES = [
     {"name": "node1", "url": "http://localhost:8001", "email": "admin@node1.fed-med-fl.com", "password": "AdminNode1@2026"},
-    {"name": "node2", "url": "http://localhost:8002", "email": "admin@node2.fed-med-fl.com", "password": "AdminNode2@2026"},
-    {"name": "node3", "url": "http://localhost:8003", "email": "admin@node3.fed-med-fl.com", "password": "AdminNode3@2026"},
-    {"name": "node4", "url": "http://localhost:8004", "email": "admin@node4.fed-med-fl.com", "password": "AdminNode4@2026"},
+    # {"name": "node2", "url": "http://localhost:8002", "email": "admin@node2.fed-med-fl.com", "password": "AdminNode2@2026"},
+    # {"name": "node3", "url": "http://localhost:8003", "email": "admin@node3.fed-med-fl.com", "password": "AdminNode3@2026"},
+    # {"name": "node4", "url": "http://localhost:8004", "email": "admin@node4.fed-med-fl.com", "password": "AdminNode4@2026"},
 ]
 
 # ============================================================================

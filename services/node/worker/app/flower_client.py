@@ -45,6 +45,13 @@ from node_core import (
 # Global variable to store last training metrics
 _last_training_metrics = None
 
+# Import set_stage — graceful fallback if resource_monitor not available
+try:
+    from resource_monitor import set_stage as _set_stage
+except ImportError:
+    def _set_stage(stage: str) -> None:
+        pass
+
 
 # ============================================================================
 # CsvDataset — dataset care citește din fișiere CSV cu split-uri fixe
@@ -216,6 +223,7 @@ class FedMedClient(fl.client.NumPyClient):
     
     def _load_data(self):
         """Load and prepare datasets."""
+        _set_stage("loading_data")
         self._log.info(f"Loading dataset from {self.dataset_path}...")
 
         # NOU: Dacă splits_dir e setat, folosim split-urile fixe din CSV
@@ -381,6 +389,7 @@ class FedMedClient(fl.client.NumPyClient):
 
         self.set_parameters(parameters)
         self._log.ok("Received global model parameters from server")
+        _set_stage(f"round_{current_round}_training")
 
         # NOU: salvăm o copie a parametrilor globali pentru delta_norm
         fit_start = time.time()
@@ -467,6 +476,7 @@ class FedMedClient(fl.client.NumPyClient):
         num_samples = len(self.train_loader.dataset)
         
         # Run final evaluation to get detailed metrics
+        _set_stage(f"round_{current_round}_evaluating")
         final_loss, _, eval_metrics = self.evaluate(updated_parameters, {})
 
         # NOU: calculare delta_norm
@@ -546,6 +556,7 @@ class FedMedClient(fl.client.NumPyClient):
         self._log.step(f"Final train loss: {metrics['train_loss']:.4f}")
         self._log.step(f"Final val loss: {metrics['val_loss']:.4f}")
         self._log.info("Sending updated parameters to server...")
+        _set_stage(f"round_{current_round}_complete")
 
         return updated_parameters, num_samples, metrics
     
