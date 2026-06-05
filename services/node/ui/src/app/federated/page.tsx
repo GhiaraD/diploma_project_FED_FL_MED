@@ -24,6 +24,8 @@ import {
   DialogActions,
   Divider,
   TextField,
+  Switch,
+  FormControlLabel,
 } from '@mui/material';
 import {
   Refresh as RefreshIcon,
@@ -55,6 +57,7 @@ interface TrainingSession {
 
 export default function FederatedPage() {
   const [sessions, setSessions] = useState<TrainingSession[]>([]);
+  const [readyForTraining, setReadyForTraining] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(0);
@@ -150,9 +153,42 @@ export default function FederatedPage() {
         <Container maxWidth="xl">
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
             <Typography variant="h4">Federated Learning History</Typography>
-            <Button variant="outlined" startIcon={<RefreshIcon />} onClick={fetchHistory} disabled={loading}>
-              Refresh
-            </Button>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 1,
+                  px: 2,
+                  py: 1,
+                  borderRadius: 2,
+                  border: '1px solid',
+                  borderColor: readyForTraining ? 'success.main' : 'error.main',
+                  bgcolor: readyForTraining ? 'success.50' : 'error.50',
+                }}
+              >
+                <Box
+                  sx={{
+                    width: 10,
+                    height: 10,
+                    borderRadius: '50%',
+                    bgcolor: readyForTraining ? 'success.main' : 'error.main',
+                  }}
+                />
+                <Typography variant="body2" fontWeight="medium" color={readyForTraining ? 'success.dark' : 'error.dark'}>
+                  {readyForTraining ? 'Ready for training' : 'Not participating'}
+                </Typography>
+                <Switch
+                  checked={readyForTraining}
+                  onChange={(e) => setReadyForTraining(e.target.checked)}
+                  color="success"
+                  size="small"
+                />
+              </Box>
+              <Button variant="outlined" startIcon={<RefreshIcon />} onClick={fetchHistory} disabled={loading}>
+                Refresh
+              </Button>
+            </Box>
           </Box>
 
           {error && (
