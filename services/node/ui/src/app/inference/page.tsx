@@ -272,7 +272,6 @@ const FileItem = memo(function FileItem({ file, selected, onToggle }: FileItemPr
 
 export default function InferencePage() {
   const { token, user } = useAuth();
-  const isViewer = user?.role === 'viewer';
   const [currentDir, setCurrentDir] = useState('/storage/datasets');
   const [files, setFiles] = useState<any[]>([]);
   const [subdirs, setSubdirs] = useState<any[]>([]);
@@ -400,9 +399,7 @@ export default function InferencePage() {
       setFilesTotalTruncated(data.truncated || false);
       setCurrentDir(directory);
     } catch (err) {
-      if (!isViewer) {
-        setError(err instanceof Error ? err.message : 'Failed to browse directory');
-      }
+      setError(err instanceof Error ? err.message : 'Failed to browse directory');
     } finally {
       setBrowsing(false);
     }
@@ -765,10 +762,10 @@ export default function InferencePage() {
                   size="large"
                   startIcon={<PsychologyIcon />}
                   onClick={handleInference}
-                  disabled={selectedPaths.size === 0 || loading || isViewer}
+                  disabled={selectedPaths.size === 0 || loading}
                   fullWidth
                 >
-                  {loading ? <CircularProgress size={24} /> : isViewer ? 'Run Inference (No Permission)' : 'Run Inference'}
+                  {loading ? <CircularProgress size={24} /> : 'Run Inference'}
                 </Button>
               </Box>
             </Paper>

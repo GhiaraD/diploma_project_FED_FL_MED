@@ -269,7 +269,7 @@ async def change_password(
 async def create_user(
     request: Request,
     user_data: UserCreate,
-    current_user: dict = Depends(require_role("admin")),
+    current_user: dict = Depends(require_role("admin_spital")),
     db: Session = Depends(get_db)
 ):
     """
@@ -326,7 +326,7 @@ async def create_user(
 
 @router.get("/users", response_model=List[UserResponse])
 async def list_users(
-    current_user: dict = Depends(require_role("admin")),
+    current_user: dict = Depends(require_role("admin_spital")),
     db: Session = Depends(get_db)
 ):
     """
@@ -340,7 +340,7 @@ async def list_users(
 async def deactivate_user(
     user_id: str,
     request: Request,
-    current_user: dict = Depends(require_role("admin")),
+    current_user: dict = Depends(require_role("admin_spital")),
     db: Session = Depends(get_db)
 ):
     """
@@ -380,7 +380,7 @@ async def deactivate_user(
 async def create_api_key(
     request: Request,
     api_key_data: ApiKeyCreate,
-    current_user: dict = Depends(require_role("admin")),
+    current_user: dict = Depends(require_role("admin_spital")),
     db: Session = Depends(get_db)
 ):
     """
@@ -434,7 +434,7 @@ async def create_api_key(
 
 @router.get("/api-keys", response_model=List[ApiKeyResponse])
 async def list_api_keys(
-    current_user: dict = Depends(require_role("admin")),
+    current_user: dict = Depends(require_role("admin_spital")),
     db: Session = Depends(get_db)
 ):
     """
@@ -448,7 +448,7 @@ async def list_api_keys(
 async def revoke_api_key(
     key_id: str,
     request: Request,
-    current_user: dict = Depends(require_role("admin")),
+    current_user: dict = Depends(require_role("admin_spital")),
     db: Session = Depends(get_db)
 ):
     """
@@ -490,7 +490,7 @@ async def get_audit_logs(
     offset: int = 0,
     event_type: str = None,
     user_id: str = None,
-    current_user: dict = Depends(require_role("admin")),
+    current_user: dict = Depends(require_role("admin_spital")),
     db: Session = Depends(get_db)
 ):
     """
@@ -511,7 +511,7 @@ async def get_audit_logs(
 
 @router.get("/security-metrics", response_model=SecurityMetrics)
 async def get_security_metrics(
-    current_user: dict = Depends(require_role("admin")),
+    current_user: dict = Depends(require_role("admin_spital")),
     db: Session = Depends(get_db)
 ):
     """

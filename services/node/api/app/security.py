@@ -44,10 +44,10 @@ class SecurityManager:
     
     def __init__(self):
         self.rate_limits = {
-            "admin": 1000,      # 1000 req/min
-            "doctor": 100,      # 100 req/min
-            "viewer": 30,       # 30 req/min
-            "api_key": 500      # 500 req/min for inter-node
+            "admin_spital": 1000,   # 1000 req/min
+            "admin_central": 100,   # 100 req/min
+            "doctor": 100,          # 100 req/min
+            "api_key": 500          # 500 req/min for inter-node
         }
         
         self.endpoint_limits = {
@@ -58,15 +58,12 @@ class SecurityManager:
         }
         
         self.permissions_map = {
-            "admin": ["*"],  # Full access
+            "admin_spital": ["*"],  # Full access
+            "admin_central": ["write:federated", "read:federated"],  # FL orchestration only
             "doctor": [
                 "read:models", "write:models", "write:inference", "read:inference",
                 "read:datasets", "read:jobs", "read:inference_history"
             ],
-            "viewer": [
-                "read:models", "read:inference",
-                "read:inference_history", "read:jobs"
-            ]
         }
     
     def verify_password(self, plain_password: str, hashed_password: str) -> bool:
@@ -443,13 +440,32 @@ def require_role(role: str):
     def role_checker(
         current_user: dict = Depends(get_current_user)
     ) -> dict:
-        if current_user["role"] != role and current_user["role"] != "admin":
+        if current_user["role"] != role and current_user["role"] != "admin_spital":
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Insufficient role. Required: {role}"
             )
         return current_user
     
+    return role_checker
+
+
+def require_role_exact(role: str):
+    """
+    Dependency factory for strict role-based access control.
+    Unlike require_role(), admin_spital does NOT get automatic access.
+    Only the exact role specified is allowed.
+    """
+    def role_checker(
+        current_user: dict = Depends(get_current_user)
+    ) -> dict:
+        if current_user["role"] != role:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"This endpoint requires role: {role}"
+            )
+        return current_user
+
     return role_checker
 
 

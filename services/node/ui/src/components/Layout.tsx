@@ -39,26 +39,32 @@ import { useState } from 'react';
 const drawerWidth = 240;
 
 const menuItems = [
-  { text: 'Dashboard', icon: <DashboardIcon />, href: '/', requiredPermission: 'read:dashboard' },
+  { text: 'Dashboard', icon: <DashboardIcon />, href: '/', requiredPermission: 'admin_spital' },
   { text: 'Datasets', icon: <FolderIcon />, href: '/datasets', requiredPermission: 'read:datasets' },
-  { text: 'Federated', icon: <HubIcon />, href: '/federated', requiredPermission: 'write:federated' },
+  { text: 'Federated', icon: <HubIcon />, href: '/federated', requiredPermission: 'read:federated' },
   { text: 'Models', icon: <StorageIcon />, href: '/models', requiredPermission: 'read:models' },
   { text: 'Inference', icon: <PsychologyIcon />, href: '/inference', requiredPermission: 'read:inference' },
   { text: 'Jobs', icon: <WorkIcon />, href: '/jobs', requiredPermission: 'read:jobs' },
-  { text: 'Audit', icon: <SecurityIcon />, href: '/audit', requiredPermission: 'admin' },
+  { text: 'Audit', icon: <SecurityIcon />, href: '/audit', requiredPermission: 'admin_spital' },
 ];
 
 function hasPermission(role: string | undefined, required: string | null): boolean {
   if (required === null) return true;
-  if (role === 'admin') return true;
-  if (required === 'admin') return false;
+  if (role === 'admin_spital') return true;
+  if (required === 'admin_spital') return false;
 
   const permissionsMap: Record<string, string[]> = {
-    doctor:     ['read:models', 'write:models', 'write:inference', 'read:inference', 'read:datasets', 'read:jobs', 'read:inference_history'],
-    viewer:     ['read:models', 'read:inference', 'read:inference_history', 'read:jobs'],
+    admin_central: ['write:federated', 'read:federated'],
+    doctor:        ['read:models', 'write:models', 'write:inference', 'read:inference', 'read:datasets', 'read:jobs', 'read:inference_history'],
   };
 
-  return (permissionsMap[role ?? ''] ?? []).includes(required);
+  const userPerms = permissionsMap[role ?? ''] ?? [];
+
+  // Exact match
+  if (userPerms.includes(required)) return true;
+
+  // Wildcard prefix match (e.g. "read:*" covers "read:models")
+  return userPerms.some(p => p.endsWith(':*') && required.startsWith(p.slice(0, -1)));
 }
 
 interface LayoutProps {

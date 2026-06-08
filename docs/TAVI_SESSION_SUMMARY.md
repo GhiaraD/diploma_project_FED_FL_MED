@@ -61,6 +61,8 @@ Capitolul 5 — Detalii de implementare
 4. **Autentificare pe Central API** (`services/central/app/main.py`) — momentan fără autentificare, necesită JWT similar cu Node API
 5. **Endpoint-ul** `/api/federated/train` restricționat exclusiv la `admin_central`
 6. **Flag consimțământ FL** pe nod — endpoint `POST /api/federated/participation` apelat din butonul toggle din pagina Federated, setabil doar de `admin_spital`; verificat la apelul `/api/federated/train`
+7. **Calcul metrica F2** 
+8. **Best model sa fie luat dupa F2** 
 
 ---
 

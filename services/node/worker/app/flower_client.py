@@ -385,6 +385,9 @@ class FedMedClient(fl.client.NumPyClient):
         # Get current round from config
         current_round = config.get("server_round", "?")
 
+        print(f"\n{'='*60}", flush=True)
+        print(f"  RUNDA {current_round}", flush=True)
+        print(f"{'='*60}", flush=True)
         self._log.section(f"FEDERATED LEARNING ROUND {current_round}")
 
         self.set_parameters(parameters)
@@ -499,6 +502,7 @@ class FedMedClient(fl.client.NumPyClient):
             "node_id": self.node_id,
             "val_auc": float(eval_metrics.get('auc', 0) or 0),
             "val_f1": float(eval_metrics.get('f1', 0) or 0),
+            "val_f2": float(eval_metrics.get('f2', 0) or 0),
             "val_sensitivity": float(eval_metrics.get('sensitivity', eval_metrics.get('recall', 0)) or 0),
             "val_specificity": float(eval_metrics.get('specificity', 0) or 0),
             "val_pr_auc": float(eval_metrics.get('pr_auc', 0) or 0),
@@ -713,6 +717,7 @@ class FedMedClient(fl.client.NumPyClient):
         metrics = {
             'accuracy': float(metrics_full.get('accuracy', 0)),
             'f1': float(metrics_full.get('f1', 0)),
+            'f2': float(metrics_full.get('f2', 0)),
             'precision': float(metrics_full.get('precision', 0)),
             'recall': float(metrics_full.get('recall', 0)),
             'auc': float(metrics_full.get('auc', 0) or 0),

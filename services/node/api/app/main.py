@@ -15,7 +15,7 @@ import asyncio
 import json
 
 from .config import settings
-from .database import get_db, Model, Job, Dataset, InferenceResult
+from .database import get_db, Model, Job, Dataset, InferenceResult, NodeParticipation
 from .schemas import (
     ModelInfo, ModelPromoteRequest, ModelListResponse,
     JobInfo, JobCreateResponse,
@@ -25,8 +25,8 @@ from .schemas import (
     HealthResponse, NodeStatusResponse
 )
 from .security import (
-    get_current_user, require_permission, require_role, 
-    rate_limit_check, audit_log_middleware, optional_auth
+    get_current_user, require_permission, require_role, require_role_exact,
+    rate_limit_check, audit_log_middleware, optional_auth, security_manager
 )
 from .auth import router as auth_router
 from .audit_helper import (
@@ -524,13 +524,14 @@ async def delete_dataset(
 
 def compute_model_labels(models_list, db: Session):
     """
-    Compute labels for models based on accuracy and deployed status.
-    
+    Compute labels for models based on F2 score and deployed status.
+
     Labels:
     - "active": deployed model (used for inference)
-    - "global": best model (highest accuracy)
+    - "global": best model by F2 score on local test data
+               (falls back to accuracy if F2 not available)
     - "candidate": neither active nor global (or both)
-    
+
     A model can have 1-2 labels (e.g., both "global" and "active" if best model is deployed)
     Note: No "archived" label - old deployed models return to "candidate" status
     """
@@ -540,16 +541,20 @@ def compute_model_labels(models_list, db: Session):
         if m.type == "deployed":
             deployed_model_id = m.model_id
             break
-    
-    # Find best model (highest accuracy) - include all models
+
+    # Find best model by F2 score; fall back to accuracy for models without F2
     best_model_id = None
-    best_accuracy = -1
+    best_score = -1.0
     for m in models_list:
-        if m.metrics and "accuracy" in m.metrics:
-            acc = m.metrics["accuracy"]
-            if acc > best_accuracy:
-                best_accuracy = acc
-                best_model_id = m.model_id
+        if not m.metrics:
+            continue
+        # Prefer f2, fall back to accuracy for backward compatibility
+        score = m.metrics.get("f2") or m.metrics.get("val_f2")
+        if score is None:
+            score = m.metrics.get("accuracy")
+        if score is not None and float(score) > best_score:
+            best_score = float(score)
+            best_model_id = m.model_id
     
     # Assign labels
     for m in models_list:
@@ -607,12 +612,15 @@ def list_models(
         if not metrics:
             return metrics
         
-        # Create a copy to avoid modifying original
         normalized = dict(metrics) if isinstance(metrics, dict) else {}
         
         # Map f1_score to f1 for UI compatibility
         if 'f1_score' in normalized and 'f1' not in normalized:
             normalized['f1'] = normalized['f1_score']
+        
+        # Expose val_f2 as f2 if top-level f2 is missing
+        if 'f2' not in normalized and 'val_f2' in normalized:
+            normalized['f2'] = normalized['val_f2']
         
         return normalized
     
@@ -1096,6 +1104,81 @@ def serve_image(
 # Federated Learning Endpoints
 # ============================================================================
 
+
+@app.post("/api/federated/participation")
+async def set_participation(
+    ready: bool,
+    request: Request,
+    current_user: dict = Depends(require_role_exact("admin_spital")),
+    db: Session = Depends(get_db),
+):
+    """
+    Set this node's readiness for federated learning.
+
+    Only admin_spital can call this endpoint. The state is persisted in the
+    database and can be read back via GET /api/federated/participation.
+
+    Args:
+        ready: True = node is ready to participate; False = node opts out
+    """
+    record = db.query(NodeParticipation).filter(
+        NodeParticipation.node_id == settings.NODE_ID
+    ).first()
+
+    if record is None:
+        record = NodeParticipation(
+            node_id=settings.NODE_ID,
+            is_ready=ready,
+            updated_by=current_user["id"],
+        )
+        db.add(record)
+    else:
+        record.is_ready = ready
+        record.updated_at = datetime.utcnow()
+        record.updated_by = current_user["id"]
+
+    db.commit()
+
+    await security_manager.log_audit_event(
+        event_type="federated_participation_changed",
+        user_id=current_user["id"],
+        request=request,
+        additional_data={"is_ready": ready, "node_id": settings.NODE_ID},
+        db=db,
+        response_status=200,
+    )
+
+    return {
+        "node_id": settings.NODE_ID,
+        "is_ready": ready,
+        "updated_at": record.updated_at.isoformat(),
+    }
+
+
+@app.get("/api/federated/participation")
+def get_participation(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get this node's current readiness state for federated learning.
+
+    Readable by any authenticated user.
+    """
+    record = db.query(NodeParticipation).filter(
+        NodeParticipation.node_id == settings.NODE_ID
+    ).first()
+
+    is_ready = record.is_ready if record is not None else False
+    updated_at = record.updated_at.isoformat() if record is not None else None
+
+    return {
+        "node_id": settings.NODE_ID,
+        "is_ready": is_ready,
+        "updated_at": updated_at,
+    }
+
+
 @app.post("/api/federated/train", response_model=JobCreateResponse)
 async def start_federated_training(
     dataset_id: str,
@@ -1104,7 +1187,7 @@ async def start_federated_training(
     splits_dir: str = None,
     request: Request = None,
     background_tasks: BackgroundTasks = None,
-    current_user: dict = Depends(require_permission("write:federated")),
+    current_user: dict = Depends(require_role_exact("admin_central")),
     db: Session = Depends(get_db)
 ):
     """

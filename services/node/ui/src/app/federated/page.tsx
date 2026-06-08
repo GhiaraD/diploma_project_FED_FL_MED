@@ -58,6 +58,7 @@ interface TrainingSession {
 export default function FederatedPage() {
   const [sessions, setSessions] = useState<TrainingSession[]>([]);
   const [readyForTraining, setReadyForTraining] = useState(false);
+  const [participationLoading, setParticipationLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(0);
@@ -65,11 +66,14 @@ export default function FederatedPage() {
   const [selectedSession, setSelectedSession] = useState<TrainingSession | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const { token } = useAuth();
+  const { token, user } = useAuth();
+
+  const isAdminSpital = user?.role === 'admin_spital';
 
   useEffect(() => {
     if (token) {
       fetchHistory();
+      fetchParticipation();
       const interval = setInterval(fetchHistory, 10000);
       return () => clearInterval(interval);
     }
@@ -78,8 +82,7 @@ export default function FederatedPage() {
   const fetchHistory = async () => {
     try {
       setLoading(true);
-      const apiBase = API_BASE;
-      const response = await fetch(`${apiBase}/api/federated/history`, {
+      const response = await fetch(`${API_BASE}/api/federated/history`, {
         headers: { 'Authorization': `Bearer ${token}` },
       });
       if (!response.ok) throw new Error('Failed to fetch training history');
@@ -90,6 +93,42 @@ export default function FederatedPage() {
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchParticipation = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/api/federated/participation`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      setReadyForTraining(data.is_ready ?? false);
+    } catch {
+      // silently ignore — non-critical
+    }
+  };
+
+  const handleParticipationToggle = async (newValue: boolean) => {
+    if (!isAdminSpital) return;
+    setParticipationLoading(true);
+    try {
+      const response = await fetch(
+        `${API_BASE}/api/federated/participation?ready=${newValue}`,
+        {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` },
+        }
+      );
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || 'Failed to update participation');
+      }
+      setReadyForTraining(newValue);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update participation status');
+    } finally {
+      setParticipationLoading(false);
     }
   };
 
@@ -178,12 +217,18 @@ export default function FederatedPage() {
                 <Typography variant="body2" fontWeight="medium" color={readyForTraining ? 'success.dark' : 'error.dark'}>
                   {readyForTraining ? 'Ready for training' : 'Not participating'}
                 </Typography>
-                <Switch
-                  checked={readyForTraining}
-                  onChange={(e) => setReadyForTraining(e.target.checked)}
-                  color="success"
-                  size="small"
-                />
+                <Tooltip title={isAdminSpital ? '' : 'Only admin_spital can change this'}>
+                  <span>
+                    <Switch
+                      checked={readyForTraining}
+                      onChange={(e) => handleParticipationToggle(e.target.checked)}
+                      color="success"
+                      size="small"
+                      disabled={!isAdminSpital || participationLoading}
+                    />
+                  </span>
+                </Tooltip>
+                {participationLoading && <CircularProgress size={16} />}
               </Box>
               <Button variant="outlined" startIcon={<RefreshIcon />} onClick={fetchHistory} disabled={loading}>
                 Refresh

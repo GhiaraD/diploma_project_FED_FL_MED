@@ -13,7 +13,7 @@ from datetime import datetime
 class UserCreate(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=12, description="Password must be at least 12 characters")
-    role: str = Field(..., pattern="^(admin|doctor|viewer)$")
+    role: str = Field(..., pattern="^(admin_spital|admin_central|doctor)$")
     node_id: str = Field(..., pattern="^(node1|node2|node3|central)$")
 
 

@@ -436,8 +436,10 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
                         aggregation_method=self.aggregation_method,
                         time_round_sec=round(time.time() - round_start, 2),
                         update_norm=round(update_norm, 6),
+                        test_loss=test_metrics.get("test_loss"),
                         test_auc=test_metrics.get("test_auc"),
                         test_f1=test_metrics.get("test_f1"),
+                        test_f2=test_metrics.get("test_f2"),
                         test_sensitivity=test_metrics.get("test_sensitivity"),
                         test_specificity=test_metrics.get("test_specificity"),
                         test_pr_auc=test_metrics.get("test_pr_auc"),
@@ -463,8 +465,10 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
 
             if test_metrics.get("test_auc") is not None:
                 _log.info("Test Global Metrics:")
+                _log.step(f"Loss: {test_metrics['test_loss']:.4f}")
                 _log.step(f"AUC: {test_metrics['test_auc']:.4f}")
                 _log.step(f"F1: {test_metrics['test_f1']:.4f}")
+                _log.step(f"F2: {test_metrics['test_f2']:.4f}")
                 _log.step(f"Sensitivity: {test_metrics['test_sensitivity']:.4f}")
                 _log.step(f"Specificity: {test_metrics['test_specificity']:.4f}")
 
@@ -542,7 +546,8 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
             Dacă evaluarea eșuează, returnează dict cu valori None.
         """
         null_result = {
-            "test_auc": None, "test_f1": None,
+            "test_loss": None,
+            "test_auc": None, "test_f1": None, "test_f2": None,
             "test_sensitivity": None, "test_specificity": None, "test_pr_auc": None,
         }
 
@@ -609,9 +614,19 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
             metrics = compute_metrics(y_true_list, y_pred_list, y_score_list)
             pr_auc = average_precision_score(y_true_list, y_score_list)
 
+            # Cross-entropy loss on test set
+            import math
+            eps = 1e-7
+            test_loss = -sum(
+                y * math.log(s + eps) + (1 - y) * math.log(1 - s + eps)
+                for y, s in zip(y_true_list, y_score_list)
+            ) / len(y_true_list)
+
             return {
+                "test_loss": round(float(test_loss), 6),
                 "test_auc": round(float(metrics.get("auc", 0) or 0), 6),
                 "test_f1": round(float(metrics.get("f1", 0) or 0), 6),
+                "test_f2": round(float(metrics.get("f2", 0) or 0), 6),
                 "test_sensitivity": round(float(metrics.get("sensitivity", 0) or 0), 6),
                 "test_specificity": round(float(metrics.get("specificity", 0) or 0), 6),
                 "test_pr_auc": round(float(pr_auc), 6),
@@ -660,6 +675,7 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
                 n_train_samples_used=int(fit_res.num_examples),
                 val_auc=float(m.get("val_auc", m.get("auc", 0)) or 0),
                 val_f1=float(m.get("val_f1", m.get("f1_score", 0)) or 0),
+                val_f2=float(m.get("val_f2", m.get("f2", 0)) or 0),
                 val_sensitivity=float(m.get("val_sensitivity", m.get("recall", 0)) or 0),
                 val_specificity=float(m.get("val_specificity", 0) or 0),
                 val_pr_auc=float(m.get("val_pr_auc", 0) or 0),

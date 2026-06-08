@@ -21,11 +21,11 @@ from typing import Dict, List, Optional, Tuple
 # SHARED TRAINING PARAMETERS — same for all 3 sessions
 # ============================================================================
 
-NUM_ROUNDS      = 1                  # FL rounds per session
-NUM_EPOCHS      = 1                  # Epochs per round (server pushes to clients)
+NUM_ROUNDS      = 30                 # FL rounds per session
+NUM_EPOCHS      = 3                  # Epochs per round (server pushes to clients)
 MODEL_NAME      = "efficientnet_b0"  # resnet18 | densenet121 | efficientnet_b0
-BATCH_SIZE      = 32                 # Per-node batch size
-LEARNING_RATE   = 0.001
+BATCH_SIZE      = 16                 # Per-node batch size
+LEARNING_RATE   = 0.0005
 OPTIMIZER       = "adam"
 
 # ============================================================================
@@ -33,20 +33,24 @@ OPTIMIZER       = "adam"
 # ============================================================================
 
 SESSIONS = [
-    # {
-    #     "label":                "FedAvgM (momentum=0.9)",
-    #     "aggregation_strategy": "fedavgm",
-    #     "server_momentum":      0.9,
-    # },
+    {
+        "label":                "FedMedian (robust)",
+        "aggregation_strategy": "fedmedian",
+    },
     {
         "label":                "FedAvg (baseline)",
         "aggregation_strategy": "fedavg",
     },
-    # {
-    #     "label":                "FedProx (mu=0.01)",
-    #     "aggregation_strategy": "fedprox",
-    #     "proximal_mu":          0.01,
-    # },
+    {
+        "label":                "FedAvgM (momentum=0.9)",
+        "aggregation_strategy": "fedavgm",
+        "server_momentum":      0.7,
+    },
+    {
+        "label":                "FedProx (mu=0.01)",
+        "aggregation_strategy": "fedprox",
+        "proximal_mu":          0.05,
+    },
 ]
 
 # ============================================================================
@@ -61,13 +65,19 @@ NODES = [
     {"name": "node3", "url": "http://localhost:8003", "email": "admin@node3.fed-med-fl.com", "password": "AdminNode3@2026"},
     {"name": "node4", "url": "http://localhost:8004", "email": "admin@node4.fed-med-fl.com", "password": "AdminNode4@2026"},
 ]
+
+# admin_central credentials — same account registered on every node
+# Used exclusively for POST /api/federated/train and GET /api/federated/status
+ADMIN_CENTRAL = {
+    "email": "admin@central.fed-med-fl.com",
+    "password": "AdminCentral@2026",
+}
 # ============================================================================
 # TIMEOUTS
 # ============================================================================
 
 TIMEOUT             = 30    # HTTP request timeout (seconds)
 POLL_INTERVAL       = 5     # Status polling interval (seconds)
-MAX_TRAINING_WAIT   = 3600  # Max wait per session (seconds)
 SERVER_INIT_WAIT    = 45    # Seconds after starting Flower Server before triggering nodes
 SERVER_STOP_WAIT    = 60    # Max seconds to wait for Flower Server to stop between sessions
 
@@ -149,9 +159,37 @@ def auth_headers(node_name: str) -> Dict[str, str]:
     return {"Authorization": f"Bearer {token}"} if token else {}
 
 
+def auth_headers_central(node_url_name: str) -> Dict[str, str]:
+    """Headers using admin_central token for the given node."""
+    token = _tokens.get(f"central_{node_url_name}")
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
+def login_central_on_node(node: Dict) -> bool:
+    """Login as admin_central on a specific node."""
+    try:
+        r = requests.post(
+            f"{node['url']}/api/auth/login",
+            data={"username": ADMIN_CENTRAL["email"], "password": ADMIN_CENTRAL["password"]},
+            timeout=TIMEOUT,
+        )
+        if r.status_code == 200:
+            token = r.json().get("access_token")
+            if token:
+                _tokens[f"central_{node['name']}"] = token
+                log(f"✓ Logged in as admin_central on {node['name']}")
+                return True
+        log(f"✗ admin_central login failed on {node['name']}: {r.status_code}", "ERROR")
+    except Exception as e:
+        log(f"✗ admin_central login error on {node['name']}: {e}", "ERROR")
+    return False
+
+
 def login_all() -> bool:
     log("Authenticating with all nodes...")
-    return all(login(node) for node in NODES)
+    node_logins = all(login(node) for node in NODES)
+    central_logins = all(login_central_on_node(node) for node in NODES)
+    return node_logins and central_logins
 
 
 # ============================================================================
@@ -336,7 +374,7 @@ def start_training(node: Dict, dataset_id: str) -> Optional[str]:
                 "batch_size": BATCH_SIZE,
                 "splits_dir": SPLITS_DIR,
             },
-            headers=auth_headers(node["name"]),
+            headers=auth_headers_central(node["name"]),
             timeout=TIMEOUT,
         )
         if r.status_code == 200:
@@ -372,7 +410,7 @@ def get_job_status(node: Dict, job_id: str) -> Optional[str]:
     try:
         r = requests.get(
             f"{node['url']}/api/federated/status/{job_id}",
-            headers=auth_headers(node["name"]),
+            headers=auth_headers_central(node["name"]),
             timeout=TIMEOUT,
         )
         if r.status_code == 200:
@@ -392,9 +430,6 @@ def monitor_training(job_ids: Dict[str, str]) -> bool:
 
     while True:
         elapsed = time.time() - start_time
-        if elapsed > MAX_TRAINING_WAIT:
-            log(f"✗ Timeout after {elapsed:.0f}s", "ERROR")
-            return False
 
         statuses: Dict[str, str] = {}
         all_reachable = True

@@ -44,8 +44,6 @@ export default function LoginPage() {
 
       if (role === 'doctor') {
         router.push('/models');
-      } else if (role === 'viewer') {
-        router.push('/inference');
       } else {
         router.push('/');
       }

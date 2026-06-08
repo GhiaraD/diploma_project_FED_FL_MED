@@ -214,7 +214,7 @@ class TestGetUserPermissions:
         self.sm = SecurityManager()
 
     def test_admin_has_wildcard(self):
-        perms = self.sm.get_user_permissions("admin")
+        perms = self.sm.get_user_permissions("admin_spital")
         assert "*" in perms
 
     def test_doctor_has_read_models(self):
@@ -225,17 +225,12 @@ class TestGetUserPermissions:
         perms = self.sm.get_user_permissions("doctor")
         assert "write:inference" in perms
 
-    def test_viewer_cannot_write(self):
-        perms = self.sm.get_user_permissions("viewer")
-        write_perms = [p for p in perms if p.startswith("write:")]
-        assert len(write_perms) == 0
-
     def test_unknown_role_returns_empty(self):
         perms = self.sm.get_user_permissions("unknown_role")
         assert perms == []
 
     def test_returns_list(self):
-        for role in ["admin", "doctor", "viewer"]:
+        for role in ["admin_spital", "doctor"]:
             assert isinstance(self.sm.get_user_permissions(role), list)
 
 
@@ -269,17 +264,13 @@ class TestHasPermission:
         assert self.sm.has_permission(["read:*"], "write:models") is False
 
     def test_admin_permissions_grant_all(self):
-        admin_perms = self.sm.get_user_permissions("admin")
+        admin_perms = self.sm.get_user_permissions("admin_spital")
         assert self.sm.has_permission(admin_perms, "read:models") is True
         assert self.sm.has_permission(admin_perms, "write:training") is True
         assert self.sm.has_permission(admin_perms, "delete:everything") is True
 
-    def test_viewer_cannot_write_training(self):
-        viewer_perms = self.sm.get_user_permissions("viewer")
-        assert self.sm.has_permission(viewer_perms, "write:training") is False
-
     def test_researcher_can_write_federated(self):
-        admin_perms = self.sm.get_user_permissions("admin")
+        admin_perms = self.sm.get_user_permissions("admin_spital")
         assert self.sm.has_permission(admin_perms, "write:federated") is True
 
 
@@ -293,7 +284,7 @@ class TestJWTTokens:
         self.sm = SecurityManager()
 
     def test_create_token_returns_string(self):
-        token = self.sm.create_access_token({"sub": "user123", "role": "admin"})
+        token = self.sm.create_access_token({"sub": "user123", "role": "admin_spital"})
         assert isinstance(token, str)
         assert len(token) > 0
 
@@ -365,7 +356,7 @@ class TestCheckRateLimit:
         original = _security.redis_client
         _security.redis_client = None
         try:
-            allowed, info = self.sm.check_rate_limit("user1", "admin", "/api/health")
+            allowed, info = self.sm.check_rate_limit("user1", "admin_spital", "/api/health")
             assert allowed is True
         finally:
             _security.redis_client = original
@@ -388,22 +379,21 @@ class TestCheckRateLimit:
 
     def test_blocked_when_over_general_limit(self):
         mock_redis = MagicMock()
-        # Simulăm că userul a depășit limita (viewer = 30 req/min)
-        mock_redis.get.return_value = "31"
+        # Simulăm că userul a depășit limita (doctor = 100 req/min)
+        mock_redis.get.return_value = "101"
 
         original = _security.redis_client
         _security.redis_client = mock_redis
         try:
-            allowed, info = self.sm.check_rate_limit("user1", "viewer", "/api/models")
+            allowed, info = self.sm.check_rate_limit("user1", "doctor", "/api/models")
             assert allowed is False
             assert info["limit_type"] == "general"
         finally:
             _security.redis_client = original
 
     def test_rate_limits_differ_by_role(self):
-        """Admin are limită mai mare decât viewer."""
-        assert self.sm.rate_limits["admin"] > self.sm.rate_limits["viewer"]
-        assert self.sm.rate_limits["doctor"] > self.sm.rate_limits["viewer"]
+        """Admin spital are limită mai mare decât doctor."""
+        assert self.sm.rate_limits["admin_spital"] > self.sm.rate_limits["doctor"]
 
 
 # ===========================================================================
@@ -475,18 +465,18 @@ class TestUserCreateSchema:
         user = _schemas.UserCreate(
             email="admin@node1.fed-med-fl.com",
             password="StrongPass@2026!",
-            role="admin",
+            role="admin_spital",
             node_id="node1",
         )
         assert user.email == "admin@node1.fed-med-fl.com"
-        assert user.role == "admin"
+        assert user.role == "admin_spital"
 
     def test_invalid_email_raises(self):
         with pytest.raises(Exception):
             _schemas.UserCreate(
                 email="not-an-email",
                 password="StrongPass@2026!",
-                role="admin",
+                role="admin_spital",
                 node_id="node1",
             )
 
@@ -504,7 +494,7 @@ class TestUserCreateSchema:
             _schemas.UserCreate(
                 email="user@node1.com",
                 password="StrongPass@2026!",
-                role="admin",
+                role="admin_spital",
                 node_id="node99",  # invalid
             )
 
@@ -513,12 +503,12 @@ class TestUserCreateSchema:
             _schemas.UserCreate(
                 email="user@node1.com",
                 password="short",
-                role="admin",
+                role="admin_spital",
                 node_id="node1",
             )
 
     def test_all_valid_roles_accepted(self):
-        for role in ["admin", "doctor", "viewer"]:
+        for role in ["admin_spital", "doctor"]:
             user = _schemas.UserCreate(
                 email=f"{role}@node1.com",
                 password="StrongPass@2026!",
@@ -532,7 +522,7 @@ class TestUserCreateSchema:
             user = _schemas.UserCreate(
                 email=f"user@{node_id}.com",
                 password="StrongPass@2026!",
-                role="admin",
+                role="admin_spital",
                 node_id=node_id,
             )
             assert user.node_id == node_id

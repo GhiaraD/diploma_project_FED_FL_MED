@@ -43,7 +43,7 @@ class User(Base):
     id = Column(String, primary_key=True, default=generate_uuid)
     email = Column(String, unique=True, index=True, nullable=False)
     password_hash = Column(String, nullable=False)
-    role = Column(String, nullable=False, index=True)  # admin, doctor, viewer
+    role = Column(String, nullable=False, index=True)  # admin_spital, admin_central, doctor
     node_id = Column(String, nullable=False, index=True)  # node1, node2, node3
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=get_local_now, nullable=False)
@@ -168,6 +168,21 @@ class InferenceResult(Base):
     probabilities = Column(JSON)  # [prob_normal, prob_pneumonia]
     gradcam_path = Column(String, nullable=True)
     created_at = Column(DateTime, default=get_local_now)
+
+
+class NodeParticipation(Base):
+    """
+    Singleton table tracking whether this node is ready to participate
+    in federated learning. At most one row exists (node_id = settings.NODE_ID).
+    Updated via POST /api/federated/participation by admin_spital only.
+    """
+    __tablename__ = "node_participation"
+
+    id = Column(Integer, primary_key=True, index=True)
+    node_id = Column(String, unique=True, nullable=False, index=True)
+    is_ready = Column(Boolean, default=False, nullable=False)
+    updated_at = Column(DateTime, default=get_local_now, nullable=False)
+    updated_by = Column(String, nullable=True)  # user_id who last changed the value
 
 
 # Create all tables

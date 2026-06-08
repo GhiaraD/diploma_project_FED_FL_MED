@@ -91,7 +91,7 @@ def create_default_users():
                 {
                     "email": f"admin@{node}.fed-med-fl.com",
                     "password": f"Admin{node.capitalize()}@2026",
-                    "role": "admin",
+                    "role": "admin_spital",
                     "node_id": node
                 },
                 {
@@ -99,16 +99,14 @@ def create_default_users():
                     "password": f"Doctor{node.capitalize()}@2026",
                     "role": "doctor",
                     "node_id": node
-                }
+                },
+                {
+                    "email": "admin@central.fed-med-fl.com",
+                    "password": "AdminCentral@2026",
+                    "role": "admin_central",
+                    "node_id": node
+                },
             ]
-            
-            # Add viewer user for each node
-            default_users.append({
-                "email": f"viewer@{node}.fed-med-fl.com",
-                "password": f"Viewer{node.capitalize()}@2026",
-                "role": "viewer",
-                "node_id": node
-            })
             
             for user_data in default_users:
                 # Check if user already exists
@@ -190,24 +188,24 @@ def print_summary():
     print("┌─────────────────────────────────────┬──────────────┬────────┐")
     print("│ Email                               │ Role         │ Node   │")
     print("├─────────────────────────────────────┼──────────────┼────────┤")
-    print("│ admin@node1.fed-med-fl.com          │ admin        │ node1  │")
+    print("│ admin@node1.fed-med-fl.com          │ admin_spital │ node1  │")
     print("│ doctor@node1.fed-med-fl.com         │ doctor       │ node1  │")
-    print("│ viewer@node1.fed-med-fl.com         │ viewer       │ node1  │")
-    print("│ admin@node2.fed-med-fl.com          │ admin        │ node2  │")
+    print("│ admin@central.fed-med-fl.com        │ admin_central│ node1  │")
+    print("│ admin@node2.fed-med-fl.com          │ admin_spital │ node2  │")
     print("│ doctor@node2.fed-med-fl.com         │ doctor       │ node2  │")
-    print("│ viewer@node2.fed-med-fl.com         │ viewer       │ node2  │")
-    print("│ admin@node3.fed-med-fl.com          │ admin        │ node3  │")
+    print("│ admin@central.fed-med-fl.com        │ admin_central│ node2  │")
+    print("│ admin@node3.fed-med-fl.com          │ admin_spital │ node3  │")
     print("│ doctor@node3.fed-med-fl.com         │ doctor       │ node3  │")
-    print("│ viewer@node3.fed-med-fl.com         │ viewer       │ node3  │")
-    print("│ admin@node4.fed-med-fl.com          │ admin        │ node4  │")
+    print("│ admin@central.fed-med-fl.com        │ admin_central│ node3  │")
+    print("│ admin@node4.fed-med-fl.com          │ admin_spital │ node4  │")
     print("│ doctor@node4.fed-med-fl.com         │ doctor       │ node4  │")
-    print("│ viewer@node4.fed-med-fl.com         │ viewer       │ node4  │")
+    print("│ admin@central.fed-med-fl.com        │ admin_central│ node4  │")
     print("└─────────────────────────────────────┴──────────────┴────────┘")
     
     print("\n🔑 Default Passwords:")
-    print("  • Admin passwords: Admin{Node}@2026")
+    print("  • Admin spital passwords: Admin{Node}@2026")
+    print("  • Admin central password: AdminCentral@2026")
     print("  • Doctor passwords: Doctor{Node}@2026")
-    print("  • Viewer passwords: Viewer{Node}@2026")
     
     print("\n🛡️ Security Features Enabled:")
     print("  ✅ JWT Authentication (30min expiry)")

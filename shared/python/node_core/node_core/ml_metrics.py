@@ -3,7 +3,7 @@ ML Metrics Module - Evaluation metrics and performance analysis.
 """
 import numpy as np
 from sklearn.metrics import (
-    accuracy_score, f1_score, precision_score, recall_score,
+    accuracy_score, f1_score, fbeta_score, precision_score, recall_score,
     confusion_matrix, classification_report, roc_curve, auc,
     roc_auc_score
 )
@@ -24,23 +24,30 @@ def compute_metrics(
         y_probs: Predicted probabilities for positive class (optional)
         
     Returns:
-        Dict with accuracy, f1, precision, recall, auc, etc.
+        Dict with accuracy, f1, f2, precision, recall, auc, etc.
     """
     metrics = {
         'accuracy': accuracy_score(y_true, y_pred),
         'f1': f1_score(y_true, y_pred, average='binary'),
+        'f2': fbeta_score(y_true, y_pred, beta=2, average='binary'),
         'precision': precision_score(y_true, y_pred, average='binary'),
         'recall': recall_score(y_true, y_pred, average='binary'),
     }
     
     # Add per-class metrics
-    precision_per_class = precision_score(y_true, y_pred, average=None)
-    recall_per_class = recall_score(y_true, y_pred, average=None)
-    
-    metrics['precision_normal'] = float(precision_per_class[0])
-    metrics['precision_pneumonia'] = float(precision_per_class[1])
-    metrics['recall_normal'] = float(recall_per_class[0])
-    metrics['recall_pneumonia'] = float(recall_per_class[1])
+    try:
+        precision_per_class = precision_score(y_true, y_pred, average=None)
+        recall_per_class = recall_score(y_true, y_pred, average=None)
+        
+        metrics['precision_normal'] = float(precision_per_class[0]) if len(precision_per_class) > 0 else 0.0
+        metrics['precision_pneumonia'] = float(precision_per_class[1]) if len(precision_per_class) > 1 else 0.0
+        metrics['recall_normal'] = float(recall_per_class[0]) if len(recall_per_class) > 0 else 0.0
+        metrics['recall_pneumonia'] = float(recall_per_class[1]) if len(recall_per_class) > 1 else 0.0
+    except Exception:
+        metrics['precision_normal'] = 0.0
+        metrics['precision_pneumonia'] = 0.0
+        metrics['recall_normal'] = 0.0
+        metrics['recall_pneumonia'] = 0.0
     
     # Compute AUC if probabilities provided
     if y_probs is not None:
@@ -144,7 +151,7 @@ def aggregate_metrics(metrics_list: List[Dict]) -> Dict:
     
     # Get all metric keys (excluding non-numeric ones)
     numeric_keys = [
-        'accuracy', 'f1', 'precision', 'recall', 'auc',
+        'accuracy', 'f1', 'f2', 'precision', 'recall', 'auc',
         'precision_normal', 'precision_pneumonia',
         'recall_normal', 'recall_pneumonia',
         'specificity', 'sensitivity'
@@ -183,6 +190,8 @@ def format_metrics_for_display(metrics: Dict) -> str:
         lines.append(f"Accuracy:  {metrics['accuracy']:.4f}")
     if 'f1' in metrics:
         lines.append(f"F1-Score:  {metrics['f1']:.4f}")
+    if 'f2' in metrics:
+        lines.append(f"F2-Score:  {metrics['f2']:.4f}")
     if 'auc' in metrics and metrics['auc'] is not None:
         lines.append(f"AUC:       {metrics['auc']:.4f}")
     

@@ -8,12 +8,21 @@ Citește fișierele de metrici din directoarele de experiment și produce:
     comparison_table.md
     auc_vs_round.png
     f1_vs_round.png
+    f2_vs_round.png
+    test_loss_vs_round.png
+    sensitivity_specificity_vs_round.png
+    update_norm_vs_round.png
     roc_curves.png
     pr_curves.png
     confusion_matrices.png
     per_node_auc_fedavg.png
+    per_node_f2_fedavg.png
     per_node_auc_fedavgm.png
+    per_node_f2_fedavgm.png
     per_node_auc_fedprox.png
+    per_node_f2_fedprox.png
+    per_node_auc_fedmedian.png
+    per_node_f2_fedmedian.png
 
 Utilizare:
   python scripts/generate_plots.py \\
@@ -118,6 +127,8 @@ def compute_metrics_from_predictions(
 
         auc = roc_auc_score(y_true, y_score)
         f1 = f1_score(y_true, y_pred)
+        from sklearn.metrics import fbeta_score
+        f2 = fbeta_score(y_true, y_pred, beta=2)
         pr_auc = average_precision_score(y_true, y_score)
 
         cm = confusion_matrix(y_true, y_pred)
@@ -128,6 +139,7 @@ def compute_metrics_from_predictions(
         return {
             "auc": round(auc, 4),
             "f1": round(f1, 4),
+            "f2": round(f2, 4),
             "sensitivity": round(sensitivity, 4),
             "specificity": round(specificity, 4),
             "pr_auc": round(pr_auc, 4),
@@ -166,7 +178,7 @@ def generate_comparison_table(
         if metrics is None:
             print(f"  WARN: Nu s-au putut calcula metricile pentru {name}")
             rows.append({
-                "model": name, "AUC": "N/A", "F1": "N/A",
+                "model": name, "AUC": "N/A", "F1": "N/A", "F2": "N/A",
                 "Sensitivity": "N/A", "Specificity": "N/A", "PR_AUC": "N/A",
             })
         else:
@@ -174,6 +186,7 @@ def generate_comparison_table(
                 "model": name,
                 "AUC": metrics["auc"],
                 "F1": metrics["f1"],
+                "F2": metrics["f2"],
                 "Sensitivity": metrics["sensitivity"],
                 "Specificity": metrics["specificity"],
                 "PR_AUC": metrics["pr_auc"],
@@ -188,7 +201,7 @@ def generate_comparison_table(
 
     # CSV
     csv_path = out / "comparison_table.csv"
-    fieldnames = ["model", "AUC", "F1", "Sensitivity", "Specificity", "PR_AUC"]
+    fieldnames = ["model", "AUC", "F1", "F2", "Sensitivity", "Specificity", "PR_AUC"]
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
@@ -199,11 +212,11 @@ def generate_comparison_table(
     md_path = out / "comparison_table.md"
     with open(md_path, "w", encoding="utf-8") as f:
         f.write("# Tabel Comparativ — Rezultate pe test_global\n\n")
-        f.write("| Model | AUC | F1 | Sensitivity | Specificity | PR-AUC |\n")
-        f.write("|-------|-----|-----|-------------|-------------|--------|\n")
+        f.write("| Model | AUC | F1 | F2 | Sensitivity | Specificity | PR-AUC |\n")
+        f.write("|-------|-----|----|----|-------------|-------------|--------|\n")
         for row in rows:
             f.write(
-                f"| {row['model']} | {row['AUC']} | {row['F1']} | "
+                f"| {row['model']} | {row['AUC']} | {row['F1']} | {row['F2']} | "
                 f"{row['Sensitivity']} | {row['Specificity']} | {row['PR_AUC']} |\n"
             )
     print(f"  ✓ {md_path}")
@@ -232,8 +245,8 @@ def plot_metric_vs_round(
     """
     fig, ax = plt.subplots(figsize=(10, 6))
 
-    colors = {"fedavg": "#2196F3", "fedavgm": "#4CAF50", "fedprox": "#FF9800"}
-    labels = {"fedavg": "FedAvg", "fedavgm": "FedAvgM", "fedprox": "FedProx"}
+    colors = {"fedavg": "#2196F3", "fedavgm": "#4CAF50", "fedprox": "#FF9800", "fedmedian": "#9C27B0"}
+    labels = {"fedavg": "FedAvg", "fedavgm": "FedAvgM", "fedprox": "FedProx", "fedmedian": "FedMedian"}
 
     has_data = False
     for strategy, exp_dir in fl_experiments.items():
@@ -282,7 +295,7 @@ def plot_metric_vs_round(
     ax.set_title(title or f"{metric} vs. Rundă FL", fontsize=14)
     ax.legend(fontsize=11)
     ax.grid(True, alpha=0.3)
-    ax.set_ylim(0, 1.05)
+    ax.set_ylim(0.85, 1.01)
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     fig.tight_layout()
@@ -311,12 +324,14 @@ def plot_roc_pr_curves(
         "fedavg": "#2196F3",
         "fedavgm": "#4CAF50",
         "fedprox": "#FF9800",
+        "fedmedian": "#9C27B0",
     }
     display_names = {
         "centralized": "Centralizat",
         "fedavg": "FedAvg",
         "fedavgm": "FedAvgM",
         "fedprox": "FedProx",
+        "fedmedian": "FedMedian",
     }
 
     fig_roc, ax_roc = plt.subplots(figsize=(8, 7))
@@ -411,6 +426,7 @@ def plot_confusion_matrices(
         "fedavg": "FedAvg",
         "fedavgm": "FedAvgM",
         "fedprox": "FedProx",
+        "fedmedian": "FedMedian",
     }
 
     cms = {}
@@ -483,7 +499,291 @@ def plot_confusion_matrices(
 
 
 # ============================================================================
-# 5. Per-nod AUC vs. rundă
+# 5. Sensitivity / Specificity vs. rundă
+# ============================================================================
+
+def plot_sensitivity_specificity_vs_round(
+    fl_experiments: Dict[str, str],
+    output_dir: str,
+) -> None:
+    """
+    Trasează sensitivity și specificity vs. rundă pe același grafic,
+    câte un subplot per strategie FL.
+
+    Sensitivity = recall pentru clasa PNEUMONIE (TP / (TP+FN))
+    Specificity = recall pentru clasa NORMAL    (TN / (TN+FP))
+    """
+    print("\n[5b] Generare sensitivity/specificity vs round...")
+
+    colors = {"fedavg": "#2196F3", "fedavgm": "#4CAF50", "fedprox": "#FF9800", "fedmedian": "#9C27B0"}
+    labels = {"fedavg": "FedAvg", "fedavgm": "FedAvgM", "fedprox": "FedProx", "fedmedian": "FedMedian"}
+
+    n = len(fl_experiments)
+    if n == 0:
+        return
+
+    fig, axes = plt.subplots(1, n, figsize=(7 * n, 5), sharey=True)
+    if n == 1:
+        axes = [axes]
+
+    has_any = False
+    for ax, (strategy, exp_dir) in zip(axes, fl_experiments.items()):
+        csv_path = str(Path(exp_dir) / "central" / "metrics_by_round.csv")
+        rows = read_csv(csv_path)
+        if rows is None:
+            ax.set_title(labels.get(strategy, strategy))
+            continue
+
+        rounds, sens_vals, spec_vals = [], [], []
+        for row in rows:
+            r = _float(row.get("round"))
+            s = _float(row.get("test_sensitivity"))
+            sp = _float(row.get("test_specificity"))
+            if r is not None and s is not None and sp is not None:
+                rounds.append(r)
+                sens_vals.append(s)
+                spec_vals.append(sp)
+
+        if not rounds:
+            ax.set_title(labels.get(strategy, strategy))
+            continue
+
+        color = colors.get(strategy, "gray")
+        ax.plot(rounds, sens_vals, color="#E53935", linewidth=2, marker="o",
+                markersize=5, label="Sensitivity (recall PNEUMONIE)")
+        ax.plot(rounds, spec_vals, color="#1E88E5", linewidth=2, marker="s",
+                markersize=5, linestyle="--", label="Specificity (recall NORMAL)")
+
+        ax.set_xlabel("Rundă FL", fontsize=11)
+        ax.set_ylabel("Valoare", fontsize=11)
+        ax.set_title(labels.get(strategy, strategy), fontsize=13, fontweight="bold")
+        ax.legend(fontsize=9)
+        ax.grid(True, alpha=0.3)
+        ax.set_ylim(0.85, 1.01)
+        has_any = True
+
+    if not has_any:
+        plt.close(fig)
+        print("  WARN: Nu există date sensitivity/specificity")
+        return
+
+    fig.suptitle("Sensitivity vs. Specificity pe Runde FL", fontsize=14, fontweight="bold")
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    output_path = str(out / "sensitivity_specificity_vs_round.png")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  ✓ {output_path}")
+
+
+# ============================================================================
+# 5b. Update Norm vs. rundă
+# ============================================================================
+
+def plot_update_norm_vs_round(
+    fl_experiments: Dict[str, str],
+    output_dir: str,
+) -> None:
+    """
+    Trasează update_norm (||W_t - W_{t-1}||_2) vs. rundă FL.
+    Indicator de convergență: scade spre 0 pe măsură ce modelul global
+    se stabilizează între runde consecutive.
+    Runda 1 are update_norm=0 prin definiție și este exclusă.
+    """
+    print("\n[5c] Generare update_norm vs round...")
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    colors = {"fedavg": "#2196F3", "fedavgm": "#4CAF50", "fedprox": "#FF9800", "fedmedian": "#9C27B0"}
+    labels = {"fedavg": "FedAvg", "fedavgm": "FedAvgM", "fedprox": "FedProx", "fedmedian": "FedMedian"}
+
+    has_data = False
+    for strategy, exp_dir in fl_experiments.items():
+        csv_path = str(Path(exp_dir) / "central" / "metrics_by_round.csv")
+        rows = read_csv(csv_path)
+        if rows is None:
+            continue
+
+        rounds, values = [], []
+        for row in rows:
+            r = _float(row.get("round"))
+            v = _float(row.get("update_norm"))
+            # Excludem runda 1 (update_norm=0, fără rundă anterioară)
+            if r is not None and v is not None and v > 0:
+                rounds.append(r)
+                values.append(v)
+
+        if rounds:
+            ax.plot(
+                rounds, values,
+                color=colors.get(strategy, "gray"),
+                label=labels.get(strategy, strategy),
+                linewidth=2,
+                marker="o",
+                markersize=5,
+            )
+            has_data = True
+
+    if not has_data:
+        plt.close(fig)
+        print("  WARN: Nu există date update_norm (sau toate sunt 0 — prea puține runde)")
+        return
+
+    ax.set_xlabel("Rundă FL", fontsize=12)
+    ax.set_ylabel("||W_t − W_{t−1}||₂", fontsize=12)
+    ax.set_title("Convergență Model Global — Update Norm vs. Rundă FL", fontsize=14)
+    ax.legend(fontsize=11)
+    ax.grid(True, alpha=0.3)
+
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    output_path = str(out / "update_norm_vs_round.png")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  ✓ {output_path}")
+
+
+# ============================================================================
+# 5c. Per-nod metrică generalizată
+# ============================================================================
+
+def plot_per_node_metric(
+    fl_experiment_path: str,
+    strategy_name: str,
+    output_dir: str,
+    metric: str,
+    ylabel: str,
+    filename_suffix: str,
+    num_nodes: int = 5,
+) -> None:
+    """
+    Trasează o metrică locală (val_auc, val_f2 etc.) per nod vs. rundă.
+    Versiune generalizată care înlocuiește plot_per_node_auc.
+    """
+    colors = ["#2196F3", "#4CAF50", "#FF9800", "#9C27B0", "#F44336"]
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    has_data = False
+    for i in range(1, num_nodes + 1):
+        csv_path = str(
+            Path(fl_experiment_path) / "nodes" / f"node{i}_metrics_by_round.csv"
+        )
+        rows = read_csv(csv_path)
+        if rows is None:
+            continue
+
+        rounds, values = [], []
+        for row in rows:
+            r = _float(row.get("round"))
+            v = _float(row.get(metric))
+            if r is not None and v is not None:
+                rounds.append(r)
+                values.append(v)
+
+        if rounds:
+            ax.plot(
+                rounds, values,
+                color=colors[(i - 1) % len(colors)],
+                label=f"Node {i}",
+                linewidth=2,
+                marker="o",
+                markersize=4,
+            )
+            has_data = True
+
+    if not has_data:
+        plt.close(fig)
+        print(f"  WARN: Nu există date {metric} per-nod pentru {strategy_name}")
+        return
+
+    ax.set_xlabel("Rundă FL", fontsize=12)
+    ax.set_ylabel(ylabel, fontsize=12)
+    ax.set_title(f"{ylabel} per Nod — {strategy_name.upper()}", fontsize=14)
+    ax.legend(fontsize=11)
+    ax.grid(True, alpha=0.3)
+    ax.set_ylim(0.85, 1.01)
+
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    output_path = str(out / f"{filename_suffix}_{strategy_name.lower()}.png")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  ✓ {output_path}")
+
+
+# ============================================================================
+# 6. Test Loss vs. rundă
+# ============================================================================
+
+def plot_test_loss_vs_round(
+    fl_experiments: Dict[str, str],
+    output_dir: str,
+) -> None:
+    """
+    Trasează test loss (cross-entropy pe test_global) vs. rundă FL
+    pentru fiecare strategie.
+
+    Citește coloana `test_loss` din central/metrics_by_round.csv.
+    """
+    print("\n[5] Generare test loss vs round...")
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    colors = {"fedavg": "#2196F3", "fedavgm": "#4CAF50", "fedprox": "#FF9800", "fedmedian": "#9C27B0"}
+    labels = {"fedavg": "FedAvg", "fedavgm": "FedAvgM", "fedprox": "FedProx", "fedmedian": "FedMedian"}
+
+    has_data = False
+    for strategy, exp_dir in fl_experiments.items():
+        csv_path = str(Path(exp_dir) / "central" / "metrics_by_round.csv")
+        rows = read_csv(csv_path)
+        if rows is None:
+            continue
+
+        rounds = []
+        values = []
+        for row in rows:
+            r = _float(row.get("round"))
+            v = _float(row.get("test_loss"))
+            if r is not None and v is not None:
+                rounds.append(r)
+                values.append(v)
+
+        if rounds:
+            ax.plot(
+                rounds, values,
+                color=colors.get(strategy, "gray"),
+                label=labels.get(strategy, strategy),
+                linewidth=2,
+                marker="o",
+                markersize=4,
+            )
+            has_data = True
+
+    if not has_data:
+        plt.close(fig)
+        print("  WARN: Nu există date test_loss în metrics_by_round.csv")
+        return
+
+    ax.set_xlabel("Rundă FL", fontsize=12)
+    ax.set_ylabel("Test Loss (cross-entropy)", fontsize=12)
+    ax.set_title("Test Loss vs. Rundă FL", fontsize=14)
+    ax.legend(fontsize=11)
+    ax.grid(True, alpha=0.3)
+
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    output_path = str(out / "test_loss_vs_round.png")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  ✓ {output_path}")
+
+
+# ============================================================================
+# 6. Per-nod AUC vs. rundă
 # ============================================================================
 
 def plot_per_node_auc(
@@ -537,7 +837,7 @@ def plot_per_node_auc(
     ax.set_title(f"AUC per Nod — {strategy_name.upper()}", fontsize=14)
     ax.legend(fontsize=11)
     ax.grid(True, alpha=0.3)
-    ax.set_ylim(0, 1.05)
+    ax.set_ylim(0.85, 1.01)
 
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -564,6 +864,8 @@ def main() -> None:
                         help="Directorul experimentului FL FedAvgM")
     parser.add_argument("--fedprox", type=str, default=None,
                         help="Directorul experimentului FL FedProx")
+    parser.add_argument("--fedmedian", type=str, default=None,
+                        help="Directorul experimentului FL FedMedian")
     parser.add_argument("--output-dir", type=str, default="results",
                         help="Directorul de output pentru grafice (default: results)")
     parser.add_argument("--num-nodes", type=int, default=5,
@@ -586,6 +888,9 @@ def main() -> None:
     if args.fedprox:
         all_experiments["fedprox"] = args.fedprox
         fl_experiments["fedprox"] = args.fedprox
+    if args.fedmedian:
+        all_experiments["fedmedian"] = args.fedmedian
+        fl_experiments["fedmedian"] = args.fedmedian
 
     if not all_experiments:
         print("EROARE: Niciun experiment specificat. Folosește --centralized, --fedavg, etc.")
@@ -631,20 +936,53 @@ def main() -> None:
             ylabel="F1 Score",
         )
 
+        plot_metric_vs_round(
+            fl_experiments=fl_experiments,
+            centralized_value=None,
+            metric="test_f2",
+            output_path=str(Path(args.output_dir) / "f2_vs_round.png"),
+            title="F2 vs. Rundă FL",
+            ylabel="F2 Score",
+        )
+
     # 3. ROC și PR curves
     plot_roc_pr_curves(all_experiments, args.output_dir)
 
     # 4. Confusion matrices
     plot_confusion_matrices(all_experiments, args.output_dir)
 
-    # 5. Per-nod AUC
+    # 5. Test Loss vs round
     if fl_experiments:
-        print("\n[5] Generare per-nod AUC...")
+        plot_test_loss_vs_round(fl_experiments, args.output_dir)
+
+    # 5b. Sensitivity / Specificity vs round
+    if fl_experiments:
+        plot_sensitivity_specificity_vs_round(fl_experiments, args.output_dir)
+
+    # 5c. Update Norm vs round (convergență)
+    if fl_experiments:
+        plot_update_norm_vs_round(fl_experiments, args.output_dir)
+
+    # 6. Per-nod metrici
+    if fl_experiments:
+        print("\n[6] Generare per-nod metrici...")
         for strategy, exp_dir in fl_experiments.items():
-            plot_per_node_auc(
+            plot_per_node_metric(
                 fl_experiment_path=exp_dir,
                 strategy_name=strategy,
                 output_dir=args.output_dir,
+                metric="val_auc",
+                ylabel="Val AUC (local)",
+                filename_suffix="per_node_auc",
+                num_nodes=args.num_nodes,
+            )
+            plot_per_node_metric(
+                fl_experiment_path=exp_dir,
+                strategy_name=strategy,
+                output_dir=args.output_dir,
+                metric="val_f2",
+                ylabel="Val F2 (local)",
+                filename_suffix="per_node_f2",
                 num_nodes=args.num_nodes,
             )
 

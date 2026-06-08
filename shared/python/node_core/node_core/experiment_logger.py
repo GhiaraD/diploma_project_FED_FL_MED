@@ -49,8 +49,10 @@ class RoundMetrics:
     aggregation_method: str
     time_round_sec: float
     update_norm: float
+    test_loss: Optional[float]
     test_auc: Optional[float]        # None dacă evaluarea a eșuat
     test_f1: Optional[float]
+    test_f2: Optional[float]
     test_sensitivity: Optional[float]
     test_specificity: Optional[float]
     test_pr_auc: Optional[float]
@@ -64,6 +66,7 @@ class NodeRoundMetrics:
     n_train_samples_used: int
     val_auc: float
     val_f1: float
+    val_f2: float
     val_sensitivity: float
     val_specificity: float
     val_pr_auc: float
@@ -429,33 +432,25 @@ class ExperimentLogger:
     # -------------------------------------------------------------------------
 
     def get_best_round(self) -> Optional[int]:
-        """
-        Citește central/metrics_by_round.csv și returnează numărul rundei
-        cu test_auc maxim (prima dacă există egalitate).
-
-        Returns:
-            Numărul rundei (câmpul 'round') sau None dacă fișierul lipsește,
-            e gol, sau toate valorile test_auc sunt None/goale.
-        """
         path = self.run_dir / "central" / "metrics_by_round.csv"
         if not path.exists():
             return None
 
         best_round = None
-        best_auc = -1.0
+        best_f2 = -1.0
 
         with open(path, "r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                auc_str = row.get("test_auc", "")
-                if auc_str == "" or auc_str is None:
+                f2_str = row.get("test_f2", "")
+                if f2_str == "" or f2_str is None:
                     continue
                 try:
-                    auc_val = float(auc_str)
+                    f2_val = float(f2_str)
                 except ValueError:
                     continue
-                if auc_val > best_auc:
-                    best_auc = auc_val
+                if f2_val > best_f2:
+                    best_f2 = f2_val
                     try:
                         best_round = int(row["round"])
                     except (KeyError, ValueError):

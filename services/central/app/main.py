@@ -285,6 +285,10 @@ def start_fl_server(
     if not os.path.isabs(experiments_dir):
         experiments_dir = "/" + experiments_dir
 
+    # Rezolvă test_global_csv la cale absolută dacă e relativ
+    if test_global_csv and not os.path.isabs(test_global_csv):
+        test_global_csv = "/" + test_global_csv
+
     # Generează run_id dacă nu e furnizat (NOU)
     effective_run_id = run_id or _generate_run_id(aggregation_strategy, model_name, experiments_dir)
 

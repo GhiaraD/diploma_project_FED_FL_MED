@@ -41,7 +41,6 @@ export default function ModelsPage() {
   const [promoting, setPromoting] = useState<string | null>(null);
   const [metricsModel, setMetricsModel] = useState<Model | null>(null);
   const { token, user } = useAuth();
-  const isViewer = user?.role === 'viewer';
 
   const fmt = (v: number | undefined | null) =>
     v != null ? (v * 100).toFixed(2) + '%' : 'N/A';
@@ -284,13 +283,13 @@ export default function ModelsPage() {
                       </TableCell>
                       <TableCell align="center">
                         {!model.labels?.includes('active') && (
-                          <Tooltip title={isViewer ? 'Insufficient permissions' : 'Promote to Active'}>
+                          <Tooltip title='Promote to Active'>
                             <span>
                               <IconButton
                                 size="small"
                                 color="primary"
                                 onClick={() => handlePromote(model.model_id)}
-                                disabled={promoting === model.model_id || isViewer}
+                                disabled={promoting === model.model_id}
                               >
                                 {promoting === model.model_id ? (
                                   <CircularProgress size={20} />

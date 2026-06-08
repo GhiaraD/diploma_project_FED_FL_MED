@@ -150,6 +150,9 @@ services:
     volumes:
       - ./storage/node1:/storage
       - ./certificates:/certificates:ro  # Mount certificates read-only
+      - ./central_dataset:/central_dataset:ro
+      - ./experiments:/experiments:ro
+      - ./experiments_tavi:/experiments_tavi:ro
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
     depends_on:
@@ -248,6 +251,9 @@ services:
     volumes:
       - ./storage/node2:/storage
       - ./certificates:/certificates:ro  # Mount certificates read-only
+      - ./central_dataset:/central_dataset:ro
+      - ./experiments:/experiments:ro
+      - ./experiments_tavi:/experiments_tavi:ro
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
     depends_on:
@@ -346,6 +352,9 @@ services:
     volumes:
       - ./storage/node3:/storage
       - ./certificates:/certificates:ro  # Mount certificates read-only
+      - ./central_dataset:/central_dataset:ro
+      - ./experiments:/experiments:ro
+      - ./experiments_tavi:/experiments_tavi:ro
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
     depends_on:
@@ -443,6 +452,7 @@ services:
       - ./certificates:/certificates:ro
       - ./central_dataset:/central_dataset:ro
       - ./experiments:/experiments:ro
+      - ./experiments_tavi:/experiments_tavi:ro
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
     depends_on:
