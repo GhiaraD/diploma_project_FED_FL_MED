@@ -63,15 +63,17 @@ def make_epoch_metrics(epoch: int = 1) -> EpochMetrics:
     )
 
 
-def make_round_metrics(round_num: int = 1, test_auc: float = 0.87) -> RoundMetrics:
+def make_round_metrics(round_num: int = 1, test_auc: float = 0.87, test_f2: float = 0.85) -> RoundMetrics:
     return RoundMetrics(
         round=round_num,
         num_clients=5,
         aggregation_method="fedavg",
         time_round_sec=123.4,
         update_norm=0.023,
+        test_loss=0.12,
         test_auc=test_auc,
         test_f1=0.85,
+        test_f2=test_f2,
         test_sensitivity=0.90,
         test_specificity=0.76,
         test_pr_auc=0.89,
@@ -85,6 +87,7 @@ def make_node_metrics(round_num: int = 1, node_id: str = "node1") -> NodeRoundMe
         n_train_samples_used=708,
         val_auc=0.82,
         val_f1=0.80,
+        val_f2=0.78,
         val_sensitivity=0.87,
         val_specificity=0.72,
         val_pr_auc=0.84,
@@ -183,8 +186,10 @@ class TestAppendRoundMetricsWithNone:
             aggregation_method="fedavg",
             time_round_sec=10.0,
             update_norm=0.01,
+            test_loss=None,
             test_auc=None,
             test_f1=None,
+            test_f2=None,
             test_sensitivity=None,
             test_specificity=None,
             test_pr_auc=None,
@@ -200,6 +205,8 @@ class TestAppendRoundMetricsWithNone:
         assert len(rows) == 1
         assert rows[0]["test_auc"] == ""
         assert rows[0]["test_f1"] == ""
+        assert rows[0]["test_f2"] == ""
+        assert rows[0]["test_loss"] == ""
 
     def test_valid_values_written_correctly(self, tmp_path):
         logger = ExperimentLogger(str(tmp_path / "run01"))
@@ -217,17 +224,17 @@ class TestGetBestRound:
 
     def test_returns_round_with_max_auc(self, tmp_path):
         logger = ExperimentLogger(str(tmp_path / "run01"))
-        aucs = [0.80, 0.85, 0.92, 0.88, 0.91]
-        for i, auc in enumerate(aucs, 1):
-            logger.append_round_metrics(make_round_metrics(round_num=i, test_auc=auc))
+        f2s = [0.80, 0.85, 0.92, 0.88, 0.91]
+        for i, f2 in enumerate(f2s, 1):
+            logger.append_round_metrics(make_round_metrics(round_num=i, test_f2=f2))
 
         best = logger.get_best_round()
-        assert best == 3, f"Runda cu AUC maxim (0.92) este 3, nu {best}"
+        assert best == 3, f"Runda cu F2 maxim (0.92) este 3, nu {best}"
 
     def test_returns_first_on_tie(self, tmp_path):
         logger = ExperimentLogger(str(tmp_path / "run01"))
         for i in range(1, 4):
-            logger.append_round_metrics(make_round_metrics(round_num=i, test_auc=0.90))
+            logger.append_round_metrics(make_round_metrics(round_num=i, test_f2=0.90))
 
         best = logger.get_best_round()
         assert best == 1, "La egalitate trebuie returnată prima rundă"
@@ -241,8 +248,8 @@ class TestGetBestRound:
         m = RoundMetrics(
             round=1, num_clients=5, aggregation_method="fedavg",
             time_round_sec=10.0, update_norm=0.01,
-            test_auc=None, test_f1=None, test_sensitivity=None,
-            test_specificity=None, test_pr_auc=None,
+            test_loss=None, test_auc=None, test_f1=None, test_f2=None,
+            test_sensitivity=None, test_specificity=None, test_pr_auc=None,
         )
         logger.append_round_metrics(m)
         assert logger.get_best_round() is None
@@ -388,8 +395,8 @@ class TestProperty4RoundTripCSV:
             m = RoundMetrics(
                 round=round_num, num_clients=5, aggregation_method="fedavg",
                 time_round_sec=10.0, update_norm=update_norm,
-                test_auc=test_auc, test_f1=None, test_sensitivity=None,
-                test_specificity=None, test_pr_auc=None,
+                test_loss=None, test_auc=test_auc, test_f1=None, test_f2=None,
+                test_sensitivity=None, test_specificity=None, test_pr_auc=None,
             )
             logger.append_round_metrics(m)
 
@@ -418,7 +425,7 @@ class TestProperty4RoundTripCSV:
             logger = ExperimentLogger(str(Path(tmp) / f"run_{round_num}_{node_id}"))
             m = NodeRoundMetrics(
                 round=round_num, node_id=node_id, n_train_samples_used=500,
-                val_auc=val_auc, val_f1=0.8, val_sensitivity=0.85,
+                val_auc=val_auc, val_f1=0.8, val_f2=0.78, val_sensitivity=0.85,
                 val_specificity=0.75, val_pr_auc=0.82,
                 local_train_time_sec=30.0, delta_norm=delta_norm,
             )
@@ -518,33 +525,33 @@ class TestProperty7BestRoundSelection:
     )
     @settings(max_examples=100)
     def test_returns_index_of_max_auc(self, auc_values):
-        """Property 7: get_best_round() returnează runda cu AUC maxim."""
+        """Property 7: get_best_round() returnează runda cu F2 maxim."""
         import tempfile
         with tempfile.TemporaryDirectory() as tmp:
             logger = ExperimentLogger(str(Path(tmp) / "run_prop7"))
-            for i, auc in enumerate(auc_values, 1):
-                logger.append_round_metrics(make_round_metrics(round_num=i, test_auc=auc))
+            for i, f2 in enumerate(auc_values, 1):
+                logger.append_round_metrics(make_round_metrics(round_num=i, test_f2=f2))
 
             best = logger.get_best_round()
             assert best is not None
 
             expected_round = auc_values.index(max(auc_values)) + 1
             assert best == expected_round, (
-                f"Așteptat runda {expected_round} (AUC={max(auc_values):.4f}), primit {best}"
+                f"Așteptat runda {expected_round} (F2={max(auc_values):.4f}), primit {best}"
             )
 
     @given(
         n_rounds=st.integers(min_value=2, max_value=30),
-        max_auc=st.floats(min_value=0.5, max_value=1.0, allow_nan=False),
+        max_f2=st.floats(min_value=0.5, max_value=1.0, allow_nan=False),
     )
     @settings(max_examples=50)
-    def test_first_round_wins_on_tie(self, n_rounds, max_auc):
-        """Property 7: La egalitate, prima rundă cu AUC maxim este returnată."""
+    def test_first_round_wins_on_tie(self, n_rounds, max_f2):
+        """Property 7: La egalitate, prima rundă cu F2 maxim este returnată."""
         import tempfile
         with tempfile.TemporaryDirectory() as tmp:
             logger = ExperimentLogger(str(Path(tmp) / "run_tie"))
             for i in range(1, n_rounds + 1):
-                logger.append_round_metrics(make_round_metrics(round_num=i, test_auc=max_auc))
+                logger.append_round_metrics(make_round_metrics(round_num=i, test_f2=max_f2))
 
             best = logger.get_best_round()
             assert best == 1, f"La egalitate trebuie returnată runda 1, nu {best}"
