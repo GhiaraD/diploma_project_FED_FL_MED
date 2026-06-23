@@ -1,6 +1,54 @@
 FROM python:3.11-slim
+
 WORKDIR /app
-RUN pip install --no-cache-dir fastapi uvicorn celery redis
-COPY app /app/app
+
+# Install system dependencies for OpenCV, PyTorch, and Docker CLI
+RUN apt-get update && apt-get install -y \
+    libgl1 \
+    libglib2.0-0 \
+    ca-certificates \
+    curl \
+    gnupg \
+    && install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
+    && chmod a+r /etc/apt/keyrings/docker.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null \
+    && apt-get update \
+    && apt-get install -y docker-ce-cli \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy shared library first
+COPY shared/python/node_core /app/shared/python/node_core
+
+# Install PyTorch with CUDA 13.2 support for RTX 5070 (Blackwell)
+# Using nightly build for CUDA 13.2 compatibility
+RUN pip install --no-cache-dir --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/cu132
+
+# Install shared library (will skip torch/torchvision since already installed)
+RUN pip install --no-cache-dir -e /app/shared/python/node_core
+
+# Install API dependencies
+RUN pip install --no-cache-dir \
+    fastapi==0.104.1 \
+    uvicorn[standard]==0.24.0 \
+    sqlalchemy==2.0.23 \
+    celery==5.3.4 \
+    redis==5.0.1 \
+    python-multipart==0.0.6 \
+    python-jose[cryptography]==3.3.0 \
+    bcrypt==4.0.1 \
+    pydantic==2.4.2 \
+    email-validator==2.1.0
+
+# Copy API code
+COPY services/node/api/app /app/app
+
+# Copy Flower client for federated training tasks
+COPY services/node/worker/app/flower_client.py /app/app/flower_client.py
+
+# Create storage directories
+RUN mkdir -p /storage/datasets /storage/models/candidate /storage/models/deployed /storage/models/archived /storage/results/inference /storage/results/training /storage/deltas
+
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host=0.0.0.0", "--port=8000"]
+
+CMD ["python", "-m", "app.main"]

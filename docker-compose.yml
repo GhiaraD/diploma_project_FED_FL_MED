@@ -3,43 +3,168 @@ version: "3.9"
 services:
   # ===== Central FL =====
   central:
-    build: ./services/central
+    build:
+      context: .
+      dockerfile: ./services/central/Dockerfile
     environment:
       CENTRAL_STORAGE: /storage
-      PORT: 8080
+      PORT: 8081  # Management API port
+      USE_FLOWER: "true"
+      # Flower server config
+      FLOWER_SERVER_ADDRESS: 0.0.0.0:8080
+      NUM_ROUNDS: 2
+      MIN_CLIENTS: 2
+      MIN_FIT_CLIENTS: 2
+      MIN_AVAILABLE_CLIENTS: 3
+      FRACTION_FIT: 0.66
+      MODEL_NAME: efficientnet_b0
+      NUM_CLASSES: 2
+      NUM_EPOCHS: 2
+      LEARNING_RATE: 0.001
+      OPTIMIZER: adam
+      # SSL/TLS Configuration
+      ENABLE_SSL: "false"  # Disabled for UI compatibility
+      CERTIFICATES_PATH: /certificates
+      FLOWER_ENABLE_SSL: "true"  # Enable mTLS for Flower gRPC Server
+      # Security Policy Configuration
+      SIGNATURE_POLICY: "log"  # Options: "log", "warn", "reject"
+      MIN_VALID_SIGNATURES: "0.8"  # 80% minimum valid signatures
+      # Server-side Differential Privacy Configuration
+      ENABLE_SERVER_DP: "false"  # Enable server-side DP noise injection
+      SERVER_DP_NOISE_MULTIPLIER: "0.1"  # Noise scale for server-side DP
+      SERVER_DP_SENSITIVITY: "1.0"  # Sensitivity for DP noise calculation
     volumes:
       - ./storage/central:/storage
+      - ./certificates:/certificates:ro  # Mount certificates read-only
     ports:
-      - "8080:8080"
+      - "8080:8080"  # Flower gRPC Server (started manually)
+      - "8081:8081"  # Management API (with HTTPS if enabled)
+    command: python -m app.main  # Start management API only
+
+  # ===== Flower Server (Manual Start) =====
+  # NOTE: Flower Server should be started manually AFTER nodes are ready to connect
+  # This prevents the server from timing out before clients connect
+  # 
+  # To start manually:
+  #   docker compose up -d flower-server
+  # 
+  # Or run directly in central container:
+  #   docker compose exec central python -m app.flower_server --num-rounds 2 --model-name efficientnet_b0 --num-epochs 2 --min-available-clients 2 --min-fit-clients 2
+  #
+  # flower-server:
+  #   build:
+  #     context: .
+  #     dockerfile: ./services/central/Dockerfile
+  #   environment:
+  #     CENTRAL_STORAGE: /storage
+  #     # Flower server config
+  #     FLOWER_SERVER_ADDRESS: 0.0.0.0:8080
+  #     NUM_ROUNDS: 2
+  #     MIN_CLIENTS: 2
+  #     MIN_FIT_CLIENTS: 2
+  #     MIN_AVAILABLE_CLIENTS: 2
+  #     FRACTION_FIT: 0.66
+  #     MODEL_NAME: efficientnet_b0
+  #     NUM_CLASSES: 2
+  #     NUM_EPOCHS: 2
+  #     LEARNING_RATE: 0.001
+  #     OPTIMIZER: adam
+  #     # SSL/TLS Configuration
+  #     CERTIFICATES_PATH: /certificates
+  #     FLOWER_ENABLE_SSL: "true"  # Enable mTLS for Flower gRPC Server
+  #   volumes:
+  #     - ./storage/central:/storage
+  #     - ./certificates:/certificates:ro  # Mount certificates read-only
+  #   ports:
+  #     - "8080:8080"  # Flower gRPC Server
+  #   command: python -m app.flower_server --num-rounds 2 --model-name efficientnet_b0 --num-epochs 2 --min-available-clients 2 --min-fit-clients 2
+  #   depends_on:
+  #     - central
 
   # ===== Node 1 =====
   node1-api:
-    build: ./services/node/api
+    build:
+      context: .
+      dockerfile: ./services/node/api/Dockerfile
     environment:
       NODE_ID: node1
       STORAGE_ROOT: /storage
-      CENTRAL_URL: http://central:8080
+      CENTRAL_URL: http://central:8081
       REDIS_URL: redis://node1-redis:6379/0
+      DEVICE: cuda
+      TZ: ${TZ:-UTC}
+      # Security configuration
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-fed-med-fl-secret-key-2026-change-in-production}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-1440}  # 24 hours
+      REDIS_HOST: node1-redis
+      REDIS_PORT: 6379
+      REDIS_SECURITY_DB: 1
+      RATE_LIMIT_ENABLED: "true"
+      API_KEY_EXPIRE_DAYS: 365
+      AUDIT_LOG_LEVEL: INFO
+      AUDIT_LOG_RETENTION_DAYS: 2555
+      # SSL/TLS Configuration
+      ENABLE_SSL: "false"  # Disabled for UI compatibility
+      CERTIFICATES_PATH: /certificates
     volumes:
       - ./storage/node1:/storage
+      - ./certificates:/certificates:ro  # Mount certificates read-only
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
     ports:
-      - "8001:8000"
+      - "8001:8000"  # Node API (with HTTPS if enabled)
     depends_on:
       - central
       - node1-redis
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
 
   node1-worker:
-    build: ./services/node/worker
+    build:
+      context: .
+      dockerfile: ./services/node/worker/Dockerfile
     environment:
       NODE_ID: node1
       STORAGE_ROOT: /storage
-      CENTRAL_URL: http://central:8080
+      CENTRAL_URL: http://central:8081  # Management API
+      FLOWER_SERVER: central:8080  # Flower gRPC
       REDIS_URL: redis://node1-redis:6379/0
+      DEVICE: cuda
+      TZ: ${TZ:-UTC}
+      # SSL/TLS Configuration for Flower Client
+      ENABLE_SSL: "true"  # Enable mTLS for Flower gRPC Client
+      CERTIFICATES_PATH: /certificates
+      # Client-side Differential Privacy Configuration
+      ENABLE_DP: "false"  # Disabled for memory optimization (in-place operations enabled)
+      DP_TARGET_EPSILON: "10.0"  # Privacy budget per round (lower = more private)
+      DP_TARGET_DELTA: "1e-5"  # Failure probability
+      DP_NOISE_MULTIPLIER: "0.5"  # Noise scale (higher = more noise)
+      DP_MAX_GRAD_NORM: "1.0"  # Gradient clipping threshold
+      DP_MAX_EPOCHS: "10"  # Maximum epochs for privacy accounting
     volumes:
       - ./storage/node1:/storage
+      - ./certificates:/certificates:ro  # Mount certificates read-only
+      - ./central_dataset:/central_dataset:ro
+      - ./experiments:/experiments:ro
+      - ./experiments_tavi:/experiments_tavi:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
     depends_on:
       - node1-redis
       - node1-api
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
 
   node1-redis:
     image: redis:7
@@ -47,7 +172,9 @@ services:
       - "63791:6379"
 
   node1-ui:
-    build: ./services/node/ui
+    build:
+      context: ./services/node/ui
+      dockerfile: Dockerfile
     environment:
       NEXT_PUBLIC_API_BASE: http://localhost:8001
     ports:
@@ -57,32 +184,88 @@ services:
 
   # ===== Node 2 =====
   node2-api:
-    build: ./services/node/api
+    build:
+      context: .
+      dockerfile: ./services/node/api/Dockerfile
     environment:
       NODE_ID: node2
       STORAGE_ROOT: /storage
-      CENTRAL_URL: http://central:8080
+      CENTRAL_URL: http://central:8081
       REDIS_URL: redis://node2-redis:6379/0
+      DEVICE: cuda
+      TZ: ${TZ:-UTC}
+      # Security configuration
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-fed-med-fl-secret-key-2026-change-in-production}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-1440}  # 24 hours
+      REDIS_HOST: node2-redis
+      REDIS_PORT: 6379
+      REDIS_SECURITY_DB: 1
+      RATE_LIMIT_ENABLED: "true"
+      API_KEY_EXPIRE_DAYS: 365
+      AUDIT_LOG_LEVEL: INFO
+      AUDIT_LOG_RETENTION_DAYS: 2555
+      # SSL/TLS Configuration
+      ENABLE_SSL: "false"  # Disabled for UI compatibility
+      CERTIFICATES_PATH: /certificates
     volumes:
       - ./storage/node2:/storage
+      - ./certificates:/certificates:ro  # Mount certificates read-only
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
     ports:
-      - "8002:8000"
+      - "8002:8000"  # Node API (with HTTPS if enabled)
     depends_on:
       - central
       - node2-redis
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
 
   node2-worker:
-    build: ./services/node/worker
+    build:
+      context: .
+      dockerfile: ./services/node/worker/Dockerfile
     environment:
       NODE_ID: node2
       STORAGE_ROOT: /storage
-      CENTRAL_URL: http://central:8080
+      CENTRAL_URL: http://central:8081
+      FLOWER_SERVER: central:8080
       REDIS_URL: redis://node2-redis:6379/0
+      DEVICE: cuda
+      TZ: ${TZ:-UTC}
+      # SSL/TLS Configuration for Flower Client
+      ENABLE_SSL: "true"  # Enable mTLS for Flower gRPC Client
+      CERTIFICATES_PATH: /certificates
+      # Client-side Differential Privacy Configuration
+      ENABLE_DP: "false"  # Disabled for memory optimization (in-place operations enabled)
+      DP_TARGET_EPSILON: "10.0"  # Privacy budget per round
+      DP_TARGET_DELTA: "1e-5"  # Failure probability
+      DP_NOISE_MULTIPLIER: "0.5"  # Noise scale
+      DP_MAX_GRAD_NORM: "1.0"  # Gradient clipping threshold
+      DP_MAX_EPOCHS: "10"  # Maximum epochs for privacy accounting
     volumes:
       - ./storage/node2:/storage
+      - ./certificates:/certificates:ro  # Mount certificates read-only
+      - ./central_dataset:/central_dataset:ro
+      - ./experiments:/experiments:ro
+      - ./experiments_tavi:/experiments_tavi:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
     depends_on:
       - node2-redis
       - node2-api
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
 
   node2-redis:
     image: redis:7
@@ -90,7 +273,9 @@ services:
       - "63792:6379"
 
   node2-ui:
-    build: ./services/node/ui
+    build:
+      context: ./services/node/ui
+      dockerfile: Dockerfile
     environment:
       NEXT_PUBLIC_API_BASE: http://localhost:8002
     ports:
@@ -100,32 +285,88 @@ services:
 
   # ===== Node 3 =====
   node3-api:
-    build: ./services/node/api
+    build:
+      context: .
+      dockerfile: ./services/node/api/Dockerfile
     environment:
       NODE_ID: node3
       STORAGE_ROOT: /storage
-      CENTRAL_URL: http://central:8080
+      CENTRAL_URL: http://central:8081
       REDIS_URL: redis://node3-redis:6379/0
+      DEVICE: cuda
+      TZ: ${TZ:-UTC}
+      # Security configuration
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-fed-med-fl-secret-key-2026-change-in-production}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-1440}  # 24 hours
+      REDIS_HOST: node3-redis
+      REDIS_PORT: 6379
+      REDIS_SECURITY_DB: 1
+      RATE_LIMIT_ENABLED: "true"
+      API_KEY_EXPIRE_DAYS: 365
+      AUDIT_LOG_LEVEL: INFO
+      AUDIT_LOG_RETENTION_DAYS: 2555
+      # SSL/TLS Configuration
+      ENABLE_SSL: "false"  # Disabled for UI compatibility
+      CERTIFICATES_PATH: /certificates
     volumes:
       - ./storage/node3:/storage
+      - ./certificates:/certificates:ro  # Mount certificates read-only
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
     ports:
-      - "8003:8000"
+      - "8003:8000"  # Node API (with HTTPS if enabled)
     depends_on:
       - central
       - node3-redis
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
 
   node3-worker:
-    build: ./services/node/worker
+    build:
+      context: .
+      dockerfile: ./services/node/worker/Dockerfile
     environment:
       NODE_ID: node3
       STORAGE_ROOT: /storage
-      CENTRAL_URL: http://central:8080
+      CENTRAL_URL: http://central:8081
+      FLOWER_SERVER: central:8080
       REDIS_URL: redis://node3-redis:6379/0
+      DEVICE: cuda
+      TZ: ${TZ:-UTC}
+      # SSL/TLS Configuration for Flower Client
+      ENABLE_SSL: "true"  # Enable mTLS for Flower gRPC Client
+      CERTIFICATES_PATH: /certificates
+      # Client-side Differential Privacy Configuration
+      ENABLE_DP: "false"  # Disabled for memory optimization (in-place operations enabled)
+      DP_TARGET_EPSILON: "10.0"  # Privacy budget per round
+      DP_TARGET_DELTA: "1e-5"  # Failure probability
+      DP_NOISE_MULTIPLIER: "0.5"  # Noise scale
+      DP_MAX_GRAD_NORM: "1.0"  # Gradient clipping threshold
+      DP_MAX_EPOCHS: "10"  # Maximum epochs for privacy accounting
     volumes:
       - ./storage/node3:/storage
+      - ./certificates:/certificates:ro  # Mount certificates read-only
+      - ./central_dataset:/central_dataset:ro
+      - ./experiments:/experiments:ro
+      - ./experiments_tavi:/experiments_tavi:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
     depends_on:
       - node3-redis
       - node3-api
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
 
   node3-redis:
     image: redis:7
@@ -133,10 +374,110 @@ services:
       - "63793:6379"
 
   node3-ui:
-    build: ./services/node/ui
+    build:
+      context: ./services/node/ui
+      dockerfile: Dockerfile
     environment:
       NEXT_PUBLIC_API_BASE: http://localhost:8003
     ports:
       - "3003:3000"
     depends_on:
       - node3-api
+
+  # ===== Node 4 =====
+  node4-api:
+    build:
+      context: .
+      dockerfile: ./services/node/api/Dockerfile
+    environment:
+      NODE_ID: node4
+      STORAGE_ROOT: /storage
+      CENTRAL_URL: http://central:8081
+      REDIS_URL: redis://node4-redis:6379/0
+      DEVICE: cuda
+      TZ: ${TZ:-UTC}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-fed-med-fl-secret-key-2026-change-in-production}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-1440}
+      REDIS_HOST: node4-redis
+      REDIS_PORT: 6379
+      REDIS_SECURITY_DB: 1
+      RATE_LIMIT_ENABLED: "true"
+      API_KEY_EXPIRE_DAYS: 365
+      AUDIT_LOG_LEVEL: INFO
+      AUDIT_LOG_RETENTION_DAYS: 2555
+      ENABLE_SSL: "false"
+      CERTIFICATES_PATH: /certificates
+    volumes:
+      - ./storage/node4:/storage
+      - ./certificates:/certificates:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    ports:
+      - "8004:8000"
+    depends_on:
+      - central
+      - node4-redis
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  node4-worker:
+    build:
+      context: .
+      dockerfile: ./services/node/worker/Dockerfile
+    environment:
+      NODE_ID: node4
+      STORAGE_ROOT: /storage
+      CENTRAL_URL: http://central:8081
+      FLOWER_SERVER: central:8080
+      REDIS_URL: redis://node4-redis:6379/0
+      DEVICE: cuda
+      TZ: ${TZ:-UTC}
+      ENABLE_SSL: "true"
+      CERTIFICATES_PATH: /certificates
+      ENABLE_DP: "false"
+      DP_TARGET_EPSILON: "10.0"
+      DP_TARGET_DELTA: "1e-5"
+      DP_NOISE_MULTIPLIER: "0.5"
+      DP_MAX_GRAD_NORM: "1.0"
+      DP_MAX_EPOCHS: "10"
+      SPLITS_DIR: /experiments/splits
+    volumes:
+      - ./storage/node4:/storage
+      - ./certificates:/certificates:ro
+      - ./central_dataset:/central_dataset:ro
+      - ./experiments:/experiments:ro
+      - ./experiments_tavi:/experiments_tavi:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    depends_on:
+      - node4-redis
+      - node4-api
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  node4-redis:
+    image: redis:7
+    ports:
+      - "63794:6379"
+
+  node4-ui:
+    build:
+      context: ./services/node/ui
+      dockerfile: Dockerfile
+    environment:
+      NEXT_PUBLIC_API_BASE: http://localhost:8004
+    ports:
+      - "3004:3000"
+    depends_on:
+      - node4-api

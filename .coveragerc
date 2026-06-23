@@ -1,0 +1,15 @@
+[run]
+source =
+    services/central/app/main
+    shared/python/node_core/node_core
+    scripts
+
+[report]
+show_missing = true
+
+[xml]
+output = coverage.xml
+
+[lcov]
+output = coverage.lcov
+relative_files = false

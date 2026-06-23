@@ -1,0 +1,268 @@
+version: "3.9"
+
+services:
+  # ===== Central FL =====
+  central:
+    build:
+      context: .
+      dockerfile: ./services/central/Dockerfile
+    environment:
+      CENTRAL_STORAGE: /storage
+      PORT: 8081  # Management API port
+      USE_FLOWER: "true"
+      # Flower server config
+      FLOWER_SERVER_ADDRESS: 0.0.0.0:8082
+      NUM_ROUNDS: 2
+      MIN_CLIENTS: 2
+      MIN_FIT_CLIENTS: 2
+      MIN_AVAILABLE_CLIENTS: 3
+      FRACTION_FIT: 0.66
+      MODEL_NAME: efficientnet_b0
+      NUM_CLASSES: 2
+      NUM_EPOCHS: 2
+      LEARNING_RATE: 0.001
+      OPTIMIZER: adam
+      # SSL/TLS Configuration
+      ENABLE_SSL: "false"  # Disabled for UI compatibility
+      CERTIFICATES_PATH: /certificates
+      # Security Policy Configuration
+      SIGNATURE_POLICY: "log"  # Options: "log", "warn", "reject"
+      MIN_VALID_SIGNATURES: "0.8"  # 80% minimum valid signatures
+    volumes:
+      - ./storage/central:/storage
+      - ./certificates:/certificates:ro  # Mount certificates read-only
+    ports:
+      - "8080:8080"  # Flower gRPC (with mTLS)
+      - "8081:8081"  # Management API (with HTTPS if enabled)
+    command: python -m app.main  # Start management API (Flower server started separately)
+
+  # ===== Node 1 =====
+  node1-api:
+    build:
+      context: .
+      dockerfile: ./services/node/api/Dockerfile
+    environment:
+      NODE_ID: node1
+      STORAGE_ROOT: /storage
+      CENTRAL_URL: http://central:8081
+      REDIS_URL: redis://node1-redis:6379/0
+      DEVICE: cpu
+      TZ: ${TZ:-UTC}
+      # Security configuration
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-fed-med-fl-secret-key-2026-change-in-production}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-1440}  # 24 hours
+      REDIS_HOST: node1-redis
+      REDIS_PORT: 6379
+      REDIS_SECURITY_DB: 1
+      RATE_LIMIT_ENABLED: "true"
+      API_KEY_EXPIRE_DAYS: 365
+      AUDIT_LOG_LEVEL: INFO
+      AUDIT_LOG_RETENTION_DAYS: 2555
+      # SSL/TLS Configuration
+      ENABLE_SSL: "false"  # Disabled for UI compatibility
+      CERTIFICATES_PATH: /certificates
+    volumes:
+      - ./storage/node1:/storage
+      - ./certificates:/certificates:ro  # Mount certificates read-only
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    ports:
+      - "8001:8000"  # Node API (with HTTPS if enabled)
+    depends_on:
+      - central
+      - node1-redis
+
+  node1-worker:
+    build:
+      context: .
+      dockerfile: ./services/node/worker/Dockerfile
+    environment:
+      NODE_ID: node1
+      STORAGE_ROOT: /storage
+      CENTRAL_URL: http://central:8081  # Management API
+      FLOWER_SERVER: central:8080  # Flower gRPC
+      REDIS_URL: redis://node1-redis:6379/0
+      DEVICE: cpu
+      TZ: ${TZ:-UTC}
+      # SSL/TLS Configuration
+      ENABLE_SSL: "true"
+      CERTIFICATES_PATH: /certificates
+    volumes:
+      - ./storage/node1:/storage
+      - ./certificates:/certificates:ro  # Mount certificates read-only
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    depends_on:
+      - node1-redis
+      - node1-api
+
+  node1-redis:
+    image: redis:7
+    ports:
+      - "63791:6379"
+
+  node1-ui:
+    build:
+      context: ./services/node/ui
+      dockerfile: Dockerfile
+    environment:
+      NEXT_PUBLIC_API_BASE: http://localhost:8001
+    ports:
+      - "3001:3000"
+    depends_on:
+      - node1-api
+
+  # ===== Node 2 =====
+  node2-api:
+    build:
+      context: .
+      dockerfile: ./services/node/api/Dockerfile
+    environment:
+      NODE_ID: node2
+      STORAGE_ROOT: /storage
+      CENTRAL_URL: http://central:8081
+      REDIS_URL: redis://node2-redis:6379/0
+      DEVICE: cpu
+      TZ: ${TZ:-UTC}
+      # Security configuration
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-fed-med-fl-secret-key-2026-change-in-production}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-1440}  # 24 hours
+      REDIS_HOST: node2-redis
+      REDIS_PORT: 6379
+      REDIS_SECURITY_DB: 1
+      RATE_LIMIT_ENABLED: "true"
+      API_KEY_EXPIRE_DAYS: 365
+      AUDIT_LOG_LEVEL: INFO
+      AUDIT_LOG_RETENTION_DAYS: 2555
+      # SSL/TLS Configuration
+      ENABLE_SSL: "false"  # Disabled for UI compatibility
+      CERTIFICATES_PATH: /certificates
+    volumes:
+      - ./storage/node2:/storage
+      - ./certificates:/certificates:ro  # Mount certificates read-only
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    ports:
+      - "8002:8000"  # Node API (with HTTPS if enabled)
+    depends_on:
+      - central
+      - node2-redis
+
+  node2-worker:
+    build:
+      context: .
+      dockerfile: ./services/node/worker/Dockerfile
+    environment:
+      NODE_ID: node2
+      STORAGE_ROOT: /storage
+      CENTRAL_URL: http://central:8081
+      FLOWER_SERVER: central:8080
+      REDIS_URL: redis://node2-redis:6379/0
+      DEVICE: cpu
+      TZ: ${TZ:-UTC}
+      # SSL/TLS Configuration
+      ENABLE_SSL: "true"
+      CERTIFICATES_PATH: /certificates
+    volumes:
+      - ./storage/node2:/storage
+      - ./certificates:/certificates:ro  # Mount certificates read-only
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    depends_on:
+      - node2-redis
+      - node2-api
+
+  node2-redis:
+    image: redis:7
+    ports:
+      - "63792:6379"
+
+  node2-ui:
+    build:
+      context: ./services/node/ui
+      dockerfile: Dockerfile
+    environment:
+      NEXT_PUBLIC_API_BASE: http://localhost:8002
+    ports:
+      - "3002:3000"
+    depends_on:
+      - node2-api
+
+  # ===== Node 3 =====
+  node3-api:
+    build:
+      context: .
+      dockerfile: ./services/node/api/Dockerfile
+    environment:
+      NODE_ID: node3
+      STORAGE_ROOT: /storage
+      CENTRAL_URL: http://central:8081
+      REDIS_URL: redis://node3-redis:6379/0
+      DEVICE: cpu
+      TZ: ${TZ:-UTC}
+      # Security configuration
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-fed-med-fl-secret-key-2026-change-in-production}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-1440}  # 24 hours
+      REDIS_HOST: node3-redis
+      REDIS_PORT: 6379
+      REDIS_SECURITY_DB: 1
+      RATE_LIMIT_ENABLED: "true"
+      API_KEY_EXPIRE_DAYS: 365
+      AUDIT_LOG_LEVEL: INFO
+      AUDIT_LOG_RETENTION_DAYS: 2555
+      # SSL/TLS Configuration
+      ENABLE_SSL: "false"  # Disabled for UI compatibility
+      CERTIFICATES_PATH: /certificates
+    volumes:
+      - ./storage/node3:/storage
+      - ./certificates:/certificates:ro  # Mount certificates read-only
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    ports:
+      - "8003:8000"  # Node API (with HTTPS if enabled)
+    depends_on:
+      - central
+      - node3-redis
+
+  node3-worker:
+    build:
+      context: .
+      dockerfile: ./services/node/worker/Dockerfile
+    environment:
+      NODE_ID: node3
+      STORAGE_ROOT: /storage
+      CENTRAL_URL: http://central:8081
+      FLOWER_SERVER: central:8080
+      REDIS_URL: redis://node3-redis:6379/0
+      DEVICE: cpu
+      TZ: ${TZ:-UTC}
+      # SSL/TLS Configuration
+      ENABLE_SSL: "true"
+      CERTIFICATES_PATH: /certificates
+    volumes:
+      - ./storage/node3:/storage
+      - ./certificates:/certificates:ro  # Mount certificates read-only
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    depends_on:
+      - node3-redis
+      - node3-api
+
+  node3-redis:
+    image: redis:7
+    ports:
+      - "63793:6379"
+
+  node3-ui:
+    build:
+      context: ./services/node/ui
+      dockerfile: Dockerfile
+    environment:
+      NEXT_PUBLIC_API_BASE: http://localhost:8003
+    ports:
+      - "3003:3000"
+    depends_on:
+      - node3-api
